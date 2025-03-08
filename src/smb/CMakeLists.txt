@@ -45,6 +45,7 @@ target_link_libraries(smbuilib
 # The old library.
 add_library(rgmslib
     rgms.cpp
+    tascompare.cpp
 )
 target_include_directories(rgmslib PUBLIC
     ${cppzmq_INCLUDE_DIRS}

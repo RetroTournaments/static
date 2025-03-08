@@ -27,6 +27,7 @@
 
 #include "smb/smbdb.h"
 #include "smb/smbdbui.h"
+#include "smb/tascompare.h"
 
 using namespace sta;
 using namespace sta::util;
@@ -150,8 +151,6 @@ bool SMBDBInit(const sta::RuntimeConfig* config, smb::SMBDatabase* smbdb) {
 // 'static smb db'
 int DoSMBDB(const sta::RuntimeConfig* config, smb::SMBDatabase* smbdb, int argc, char** argv)
 {
-    EnsureStaticDirectoryWriteable(*config);
-
     std::string arg;
     if (!ArgReadString(&argc, &argv, &arg)) {
         return smbdb->SystemLaunchSQLite3WithExamples();
@@ -175,6 +174,12 @@ int DoSMBDB(const sta::RuntimeConfig* config, smb::SMBDatabase* smbdb, int argc,
         return 1;
     }
     return 0;
+}
+
+int DoTasCompare(const sta::RuntimeConfig* config, smb::SMBDatabase* smbdb, int argc, char** argv)
+{
+    smbui::SMBTasCompareApplication app(smbdb);
+    return RunIApplication(config, "static smb tascompare", &app);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -205,6 +210,9 @@ OPTIONS:
     db path
         Print the path to the smb database.
 
+    tascompare
+        Added utility to compare super mario bros. TASes
+
 )")
 {
     std::string action;
@@ -213,10 +221,14 @@ OPTIONS:
         return 1;
     }
 
+    EnsureStaticDirectoryWriteable(*config);
+
     smb::SMBDatabase smbdb(config->StaticPathTo("smb.db"));
 
     if (action == "db") {
         return DoSMBDB(config, &smbdb, argc, argv);
+    } else if (action == "tascompare") {
+        return DoTasCompare(config, &smbdb, argc, argv);
     } else {
         Error("unrecognized action. '{}', expected 'db'", action);
         return 1;
