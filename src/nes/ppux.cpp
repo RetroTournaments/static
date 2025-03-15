@@ -584,7 +584,7 @@ void PPUx::PutPixel(int x, int y, const uint8_t* bgr,
         uint8_t* dat = m_BGROut + (y * m_Width * 3) + (x * 3);
         for (int v = 0; v < 3; v++) {
             *(dat + v) = static_cast<uint8_t>(
-                    static_cast<float>(*(dat + v)) * 1.0f - effects.Opacity +
+                    static_cast<float>(*(dat + v)) * (1.0f - effects.Opacity) +
                     static_cast<float>(*(bgr + v)) * effects.Opacity);
         }
     } else {

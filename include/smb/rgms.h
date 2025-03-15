@@ -34,6 +34,7 @@
 #include <thread>
 
 #include "nlohmann/json.hpp"
+#include "zmq.hpp"
 
 #include "static/config.h"
 #include "nes/nes.h"

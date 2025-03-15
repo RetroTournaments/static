@@ -23,15 +23,91 @@
 
 #include "smb/smbdb.h"
 #include "rgmui/rgmui.h"
+#include "smb/rgms.h"
 
 namespace sta::smbui
 {
+
+struct TasCompareTAS
+{
+    std::string name;
+    std::string path;
+    int start;
+    std::vector<rgms::SMBMessageProcessorOutput> outputs;
+    std::vector<nes::Frame> frames;
+    float opacity;
+};
+
+struct Shot
+{
+    smb::AreaID aid;
+    int apx;
+    int width;
+    int follow_tas_index;
+};
+
+struct TasCompareInfo
+{
+    int start_frame;
+    int end_frame;
+    int current_frame;
+    std::vector<TasCompareTAS> tases;
+    std::vector<Shot> shots;
+};
+
 
 class SMBTasCompareApplication : public rgmui::IApplication
 {
 public:
     SMBTasCompareApplication(smb::SMBDatabase* db);
     ~SMBTasCompareApplication();
+
+    bool OnFrame();
+
+private:
+    smb::SMBDatabase* m_db;
+    TasCompareInfo m_info;
+};
+
+class SMBTasCompareTases : public rgmui::IApplicationComponent
+{
+public:
+    SMBTasCompareTases(smb::SMBDatabase* db, TasCompareInfo* info);
+    ~SMBTasCompareTases() = default;
+
+    void OnFrame();
+
+private:
+
+    smb::SMBDatabase* m_db;
+    TasCompareInfo* m_info;
+};
+
+class SMBTasCompareIndividual : public rgmui::IApplicationComponent
+{
+public:
+    SMBTasCompareIndividual(smb::SMBDatabase* db, TasCompareInfo* info);
+    ~SMBTasCompareIndividual() = default;
+
+    void OnFrame();
+
+private:
+    smb::SMBDatabase* m_db;
+    TasCompareInfo* m_info;
+    int m_individual_index;
+};
+
+class SMBTasCompareCombined : public rgmui::IApplicationComponent
+{
+public:
+    SMBTasCompareCombined(smb::SMBDatabase* db, TasCompareInfo* info);
+    ~SMBTasCompareCombined() = default;
+
+    void OnFrame();
+
+private:
+    smb::SMBDatabase* m_db;
+    TasCompareInfo* m_info;
 };
 
 }

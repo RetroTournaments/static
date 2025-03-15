@@ -84,7 +84,7 @@ enum class AreaID : uint16_t
     GROUND_AREA_3       = 0xA539,
     GROUND_AREA_4       = 0xA58C,
     GROUND_AREA_5       = 0xA61B,
-    GROUND_AREA_6       = 0xA690,
+    GROUND_AREA_6       = 0xA690, // the start
     GROUND_AREA_7       = 0xA6F5,
     GROUND_AREA_8       = 0xA74A,
     GROUND_AREA_9       = 0xA7CF,
@@ -215,7 +215,7 @@ public:
     // TODO fix api (leaving same as rgms for now)
     void RenderTo(AreaID id, int apx, int width, nes::PPUx* ppux, int x,
             const nes::Palette& pal = nes::DefaultPaletteBGR(),
-            const uint8_t* pt = nullptr, // IGNORED
+            const uint8_t* pt = nullptr,
             const MinimapPalette* minimap = nullptr, // make nonnull to render minimap instead
             const uint8_t* fpal = nullptr, // make nonnull to overwrite found nametable
             const std::vector<SMBNametableDiff>* diffs = nullptr) const; // first diffs is priority
