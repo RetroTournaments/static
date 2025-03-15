@@ -22,3 +22,6 @@
 [submodule "3rd/libzmq"]
 	path = 3rd/libzmq
 	url = https://github.com/zeromq/libzmq.git
+[submodule "3rd/NES_MiSTer"]
+	path = 3rd/NES_MiSTer
+	url = https://github.com/RetroTournaments/NES_MiSTer
