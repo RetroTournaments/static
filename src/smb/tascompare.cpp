@@ -417,26 +417,49 @@ bool SMBTasCompareApplication::OnFrame() {
             //do_with_other("/home/matthew/repos/static/data/smb/fm2/nift_454631.fm2", "454631");
             //do_with_other("/home/matthew/repos/static/data/smb/fm2/nift_454798.fm2", "454798");
 
-            m_info.tases.clear();
-            m_info.tases.emplace_back();
-            InitTas(m_db, "/home/matthew/repos/static/data/smb/fm2/tas_454265.fm2", &m_info.tases.back(), niftmin);
-            m_info.tases.back().opacity = 0.7;
-            m_info.tases.emplace_back();
-            InitTas(m_db, "/home/matthew/repos/static/data/smb/fm2/nift_454798.fm2", &m_info.tases.back(), niftmin);
-            m_info.tases.back().opacity = 0.7;
-            m_info.tases.emplace_back();
-            InitTas(m_db, "/home/matthew/repos/static/data/smb/fm2/nift_454631.fm2", &m_info.tases.back(), niftmin);
-            m_info.tases.back().opacity = 0.7;
-            m_info.tases.emplace_back();
-            InitTas(m_db, "/home/matthew/repos/static/data/smb/fm2/nift_454565.fm2", &m_info.tases.back(), niftmin);
-            m_info.tases.back().opacity = 0.7;
+            //m_info.tases.clear();
+            //m_info.tases.emplace_back();
+            //InitTas(m_db, "/home/matthew/repos/static/data/smb/fm2/tas_454265.fm2", &m_info.tases.back(), niftmin);
+            //m_info.tases.back().opacity = 0.7;
+            //m_info.tases.emplace_back();
+            //InitTas(m_db, "/home/matthew/repos/static/data/smb/fm2/nift_454798.fm2", &m_info.tases.back(), niftmin);
+            //m_info.tases.back().opacity = 0.7;
+            //m_info.tases.emplace_back();
+            //InitTas(m_db, "/home/matthew/repos/static/data/smb/fm2/nift_454631.fm2", &m_info.tases.back(), niftmin);
+            //m_info.tases.back().opacity = 0.7;
+            //m_info.tases.emplace_back();
+            //InitTas(m_db, "/home/matthew/repos/static/data/smb/fm2/nift_454565.fm2", &m_info.tases.back(), niftmin);
+            //m_info.tases.back().opacity = 0.7;
 
-            SyncToArea(&m_info, smb::AreaID::CASTLE_AREA_6);
+            //SyncToArea(&m_info, smb::AreaID::CASTLE_AREA_6);
 
-            ExportShot(m_db, &m_info, 0, "fourx");
+            //ExportShot(m_db, &m_info, 0, "fourx");
             //for (int i = 1; i < m_info.shots.size(); i++) {
             //    ExportShot(m_db, &m_info, i, fmt::format("fixed_fourx_{:04X}_{:02d}", other_name, static_cast<int>(m_info.shots[i].aid), m_info.shots[i].apx));
             //}
+
+            m_info.tases.clear();
+            m_info.tases.emplace_back();
+            InitTas(m_db, "/home/matthew/repos/static/data/smb/fm2/nift_454565.fm2", &m_info.tases.back(), niftmin);
+
+            m_info.tases.emplace_back();
+            InitTas(m_db, "/home/matthew/repos/static/data/smb/fm2/glitchless.fm2", &m_info.tases.back(), niftmin);
+
+            SyncToArea(&m_info, smb::AreaID::CASTLE_AREA_6);
+
+            {
+                int shotn = 14;
+                int offset = 100;
+                auto& shot = m_info.shots[shotn];
+                shot.apx -= offset;
+                ExportShot(m_db, &m_info, shotn, fmt::format("454565_vs_glitchless_{:04X}_{:02d}", static_cast<int>(shot.aid), shot.apx));
+                shot.apx += offset;
+            }
+            {
+                int shotn = 19;
+                auto& shot = m_info.shots[shotn];
+                ExportShot(m_db, &m_info, shotn, fmt::format("454565_vs_glitchless_{:04X}_{:02d}", static_cast<int>(shot.aid), shot.apx));
+            }
         }
     }
     ImGui::End();
