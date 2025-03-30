@@ -54,3 +54,134 @@ sudo chmod 666 /dev/ttyUSB*
 ```
 
 
+old mister notes
+
+Trying the Mister FPGA following suggestions from Anthony Jacoway and ItsMaximum.
+
+- Purchased [DE10 Nano dev kit](https://www.mouser.com/ProductDetail/Terasic-Technologies/P0496?qs=%2FacZuiyY%252B4ZdDLJqTxdJ5w%3D%3D&countryCode=US&currencyCode=USD) from mouser. $239.12
+- Used an old 2GB micro SD card that was lying around.
+    - Formatted to FAT and erased for no particular reason
+    - DIDN'T WORK! Needed to buy a 64 gb one for like 12 bucks
+    - SanDisk 64GB, Extreme micro SDXC
+- Downloaded Mr Fusion v2.9 img, unzipped and used BalenaEtcher to flash to card.
+- Connect to cheap hdmi monitor, power, find stupid cheap usb nintendo controller
+- Purchased [Micro usb hub](https://www.amazon.com/MakerSpot-Accessories-Charging-Extension-Raspberry/dp/B01JL837X8/)
+- Purchased a [wifi dongle thing](https://www.amazon.com/gp/product/B07P5PRK7J/)
+- Connected a keyboard and nes controller through retro usb thing
+
+Going to use [update-all](https://github.com/theypsilon/Update_All_MiSTer/releases/tag/latest) at least initially.
+Put it in the scripts directory
+Then copied ini to mister.ini and set video mode to 8. Will return with more changes if needed.
+
+Ran the wifi script to connect, and then update all. Then I waited.
+
+Ok needed a ram module (else just gray screen!)
+Eventually got io board too. Usb power useful. Power button useful. Needed their cable to connect to PVM. Works!
+
+-----
+
+Some important commands:
+
+`echo "load_core /media/fat/bum.mgl" > /dev/MiSTer_cmd` where
+
+```
+<mistergamedescription>
+    <rbf>_console/NES_20240912</rbf>
+    <file delay="2" type="f" index="0" path="TETRIS.nes"/>
+</mistergamedescription>
+```
+
+Also the config was stored in `/media/fat/config/NES.CFG`
+Needed to set snac to controllers and save the config.
+
+
+Other tabs:
+- https://github.com/wizzomafizzo/mrext/blob/main/docs/remote-api.md
+- https://misterfpga.org/viewtopic.php?t=6475
+- https://github.com/RGarciaLago/MGL_Core_Setnames/tree/main?tab=readme-ov-file
+- https://mister-devel.github.io/MkDocs_MiSTer/developer/conf_str/#status-bit-map
+- https://misterfpga.org/viewtopic.php?t=524
+- https://github.com/MiSTer-devel/Scripts_MiSTer
+- https://github.com/mrchrisster/mister-nes-attract/blob/master/NES-AttractMode_on.sh
+
+
+For compiling via Quartus on windows (because quartus on linux was being lame).
+
+- Get windows 10 ISO: https://www.microsoft.com/en-us/software-download/windows10ISO
+    - put in the 'isos' share on unraid
+- Got a disk unassigned on my unraid server (for the vm) (403R, nvme1n1)
+- Had to enable 'SVM' mode in the bios
+- Followed (very roughly) this guide to set up a windows vm: https://forums.serverbuilds.net/t/guide-remote-gaming-on-unraid/4248/6
+    - isolated cpus 2, 10, 3, 11
+    - needed unassigned devices app
+    - connect to network etc. (follow the guide)
+- Downloaded / install quartus 17.0.2:
+    https://mister-devel.github.io/MkDocs_MiSTer/developer/links/#general-development-resources
+    - I first transferred this via the network share but it got broken and
+      would hang? Instead I had to download it directly on the VM. :|
+- Chocolatey then choco install 7zip git
+- Get git repo (ssh-keygen, add it, clone it, etc)
+
+Compiling takes about 30 minutes on my current setup :\
+
+
+To cross compile c code for misterfpga
+
+wget -c https://developer.arm.com/-/media/Files/downloads/gnu-a/10.2-2020.11/binrel/gcc-arm-10.2-2020.11-x86_64-arm-none-linux-gnueabihf.tar.xz
+
+https://ftp.intel.com/Public/Pub/fpgaup/pub/Intel_Material/18.1/Computer_Systems/DE10-Nano/DE10-Nano_Computer_ARM.pdf
+https://www.mouser.com/datasheet/2/598/DE10_Nano_User_manual_a_b-1108056.pdf
+
+Assignments > Pin Planner
+User_IO[0] PIN_AG11     Arduino_IO15
+User_IO[1] PIN_AH9      Arduino_IO14
+User_IO[2] PIN_AH12     Arduino_IO13
+User_IO[3] PIN_AH11     Arduino_IO12
+User_IO[4] PIN_AG16     Arduino_IO11
+User_IO[5] PIN_AF15     Arduino_IO10
+User_IO[6] PIN_AF17     Arduino_IO08
+
+Base address of port is 0xFF200100, 
+0b 0000 0000 1011 1111
+
+Trying again the next day. We have: 
+    https://github.com/MiSTer-devel/Wiki_MiSTer/wiki/DDR-Usage
+
+Also grepping around for 'uart' seems like a good call.
+in NES.sv ~143
+input  uart_cts : clear_to_send (let's hope it's 1)
+output uart_rts : request_to_send (let's just set it to 1)
+input  uart_rxd : receive
+output uart_txd : transmit
+output uart_dtr : data_terminal_ready
+input  uart_dsr : data set ready
+
+https://stackoverflow.com/questions/957337/what-is-the-difference-between-dtr-dsr-and-rts-cts-flow-control
+
+- What is the baud? is there parity? is it LSB?
+- What is the size of the frame?
+- How do I send from the emulator, how do I receive in hps?
+
+There is 'cyclonev_hps_interface_peripheral_uart uart?' referenced in sys/sys_top.v but I imagine that is just a thing from the cyclone. Those wires just get passed through to NES.sv where I see it being used with a piano.
+
+Screw the piano, let me just set it to something else.
+
+Didn't get it working. Going to try going out user io 4 and 6 instead.
+
+================================================================================
+
+Test where I have 
+    static_m2 going out rxd (LV7)
+    statc_addr[0] going out txd (RX+)
+
+I probably have to 'delay' reading from addr / data based on M2 (maybe there is
+another signal I can use too? But I am somewhat familiar with M2, and I want
+the count of that anyway. 
+
+Ok the waveform is ass, but I think I'm pushing it way too quickly because the
+distance between each peak is in that 1.75MHz range which is what I expected to
+see for M2 (1.79). The addr[0] does exhibit some variation so that's probably
+correct too..
+
+Now just to figure out a bunch of shit
+
