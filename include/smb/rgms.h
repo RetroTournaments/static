@@ -1397,7 +1397,13 @@ struct SMBCompTimingTower
 };
 void InitializeSMBCompTimingTower(SMBCompTimingTower* tower);
 void ResetSMBCompTimingTower(SMBCompTimingTower* tower);
-void StepSMBCompPlayerTimings(SMBCompPlayerTimings* timings, SMBMessageProcessorOutputPtr out,
+enum class StepTimingEvent {
+    PROGRESS,
+    STARTED_RUN,
+    END_RUN,
+    FINISH_RUN,
+};
+StepTimingEvent StepSMBCompPlayerTimings(SMBCompPlayerTimings* timings, SMBMessageProcessorOutputPtr out,
         const smb::Route* route);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1493,8 +1499,9 @@ SMBMessageProcessorOutputPtr GetLatestPlayerOutput(SMBComp& comp, const SMBCompP
 //
 class SMBCompReplayComponent;
 class SMBCompSoundComponent;
+class LTAViewApp;
 void StepTimingTower(SMBComp* comp, SMBCompTimingTower* tower, SMBCompPlayerLocations* locations,
-        SMBCompReplayComponent* replay, SMBCompSoundComponent* sound);
+        SMBCompReplayComponent* replay, SMBCompSoundComponent* sound, LTAViewApp* lta);
 void StepCombinedView(SMBComp* comp, SMBCompCombinedViewInfo* view);
 bool TimingsToText(SMBComp* comp, const SMBCompPlayerTimings* timings, const SMBCompPlayer& player,
         std::string* text, int64_t* elapsedt = nullptr);
@@ -1997,6 +2004,59 @@ private:
     SMBComp* m_Comp;
 };
 
+class LTAViewApp : public ISMBCompSingleWindowComponent
+{
+public:
+    LTAViewApp(sta::RuntimeConfig* info, SMBComp* comp);
+    ~LTAViewApp() = default;
+
+    virtual void DoControls() override final;
+    void RenderToAux(cv::Mat aux);
+    void NoteOutput(const SMBCompPlayer& player, SMBMessageProcessorOutputPtr out, const SMBCompPlayerTimings& timings, StepTimingEvent event);
+
+private:
+    sta::RuntimeConfig* m_Info;
+    SMBComp* m_Comp;
+    cv::Scalar m_BG;
+
+    struct Slot {
+        int x;
+        int y;
+        int scale;
+    };
+    struct LeaderBoard {
+        int x;
+        int y;
+    };
+    struct Layout {
+        std::vector<Slot> slots;
+        LeaderBoard board;
+    };
+    std::vector<Layout> m_Layouts;
+    std::vector<int> m_PlayerMapping;
+    int m_SwapFrom;
+    int m_LayoutIndex;
+
+    struct PlayerInfo {
+        std::vector<SMBMessageProcessorOutputPtr> current_run;
+        std::vector<int64_t> current_splits;
+
+        bool finished;
+        int64_t best_time;
+        std::string best_text;
+        std::vector<SMBMessageProcessorOutputPtr> personal_best;
+        std::vector<int64_t> personal_best_splits;
+
+        bool show_pb;
+        bool show_tb;
+    };
+    std::unordered_map<uint32_t, PlayerInfo> m_PlayerInfo;
+
+    int64_t m_TournamentBestTime;
+    std::vector<SMBMessageProcessorOutputPtr> m_TournamentBest;
+    std::vector<int64_t> m_TournamentBestSplits;
+};
+
 ////////////////////////////////////////////////////////////////////////////////
 
 #define SHARED_MEM_SIZE 6220900
@@ -2052,6 +2112,7 @@ private:
     //SMBCompTxtDisplay m_CompTxtDisplay;
     SMBCompTournamentComponent m_CompTournamentComponent;
     SMBCompLatencyHandler m_CompLatencyHandler;
+    LTAViewApp m_LTAView;
 };
 
 class SMBCompAppAux : public rgmui::IApplication
@@ -2198,6 +2259,7 @@ private:
     const sta::RuntimeConfig* m_Config;
     RecReviewDB m_Database;
 };
+
 
 }
 

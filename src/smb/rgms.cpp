@@ -4142,14 +4142,16 @@ void sta::rgms::SplitTimings(SMBCompPlayerTimings* timings, int section, int pag
 }
 
 
-void sta::rgms::StepSMBCompPlayerTimings(SMBCompPlayerTimings* timings, SMBMessageProcessorOutputPtr out,
+StepTimingEvent sta::rgms::StepSMBCompPlayerTimings(SMBCompPlayerTimings* timings, SMBMessageProcessorOutputPtr out,
         const smb::Route* route)
 {
+    StepTimingEvent event = StepTimingEvent::PROGRESS;
     switch (timings->State) {
         case (TimingState::WAITING_FOR_1_1): {
             if (out->Frame.AID == smb::AreaID::GROUND_AREA_6 && out->Frame.APX < 15 &&
                 (out->Frame.Time <= 400 && out->Frame.Time >= 399)) {
 
+                event = StepTimingEvent::STARTED_RUN;
                 timings->State = TimingState::RUNNING;
                 timings->StartedAt = util::Now();
                 timings->SplitM2s = {out->M2Count};
@@ -4160,7 +4162,7 @@ void sta::rgms::StepSMBCompPlayerTimings(SMBCompPlayerTimings* timings, SMBMessa
         case (TimingState::RUNNING): {
             if (!out->ConsolePoweredOn) {
                 InitializeSMBCompPlayerTimings(timings);
-                return;
+                return StepTimingEvent::END_RUN;
             }
             int currentSection = 0;
 
@@ -4184,6 +4186,7 @@ void sta::rgms::StepSMBCompPlayerTimings(SMBCompPlayerTimings* timings, SMBMessa
 
             if (out->Frame.World == 8 && out->Frame.Level == 4 &&
                     out->Frame.APX > 4096 && out->Frame.OperMode == 0x02) {
+                event = StepTimingEvent::FINISH_RUN;
 
                 timings->SplitM2s.resize(route->size() + 1, 0x00);
                 timings->SplitPageM2s.resize(route->size() + 1);
@@ -4196,6 +4199,7 @@ void sta::rgms::StepSMBCompPlayerTimings(SMBCompPlayerTimings* timings, SMBMessa
         }
         default: break;
     }
+    return event;
 }
 
 static void ComputeNewPositionIndices(const std::vector<int>& originalIndices, const std::vector<int>& newPositions,
@@ -4428,7 +4432,7 @@ static void ReconcileTargetAndDrawState(const TimingTowerState& target, TimingTo
 }
 
 void sta::rgms::StepTimingTower(SMBComp* comp, SMBCompTimingTower* tower, SMBCompPlayerLocations* locations,
-        SMBCompReplayComponent* replay, SMBCompSoundComponent* sound)
+        SMBCompReplayComponent* replay, SMBCompSoundComponent* sound, LTAViewApp* lta)
 {
     const std::vector<SMBCompPlayer>& players = comp->Config.Players.Players;
     for (auto & player : players) {
@@ -4449,10 +4453,11 @@ void sta::rgms::StepTimingTower(SMBComp* comp, SMBCompTimingTower* tower, SMBCom
         SMBCompFeed* feed = GetPlayerFeed(player, &comp->Feeds);
         if (feed && feed->Source) {
             while (auto out = feed->Source->GetNextProcessorOutput()) {
-                StepSMBCompPlayerTimings(timings, out, route.get());
+                auto event = StepSMBCompPlayerTimings(timings, out, route.get());
 
                 replay->NoteOutput(player, out);
                 sound->NoteOutput(player, out);
+                lta->NoteOutput(player, out, *timings, event);
             }
         }
     }
@@ -4760,10 +4765,12 @@ SMBCompApp::SMBCompApp(sta::RuntimeConfig* info)
 //    , m_CompTxtDisplay(info, &m_Competition)
     , m_CompTournamentComponent(info, &m_Competition)
     , m_CompLatencyHandler(info, &m_Competition)
+    , m_LTAView(info, &m_Competition)
     , m_SharedMemory(nullptr)
     , m_AuxVisibleInPrimary(true)
     , m_AuxVisibleScale(0.24)
-    , m_AuxDisplayType(1)
+    , m_AuxDisplayType(4)
+    //, m_AuxDisplayType(1)
     , m_CountingDown(false)
     , m_ShowTimer(true)
 {
@@ -4788,6 +4795,7 @@ SMBCompApp::SMBCompApp(sta::RuntimeConfig* info)
 //    RegisterComponent(&m_CompTxtDisplay);
     RegisterComponent(&m_CompTournamentComponent);
     RegisterComponent(&m_CompLatencyHandler);
+    RegisterComponent(&m_LTAView);
 
     m_AuxDisplay = cv::Mat::zeros(1080, 1920, CV_8UC3);
 }
@@ -4959,6 +4967,7 @@ bool SMBCompApp::OnFrame()
 //            m_CompTxtDisplay.DoMenuItem();
             m_CompTournamentComponent.DoMenuItem();
             m_CompLatencyHandler.DoMenuItem();
+            m_LTAView.DoMenuItem();
             bool v = m_AuxVisibleInPrimary;
             if (ImGui::MenuItem("Aux In Primary", NULL, v)) {
                 m_AuxVisibleInPrimary = !m_AuxVisibleInPrimary;
@@ -4978,8 +4987,8 @@ bool SMBCompApp::OnFrame()
     if (m_AuxVisibleInPrimary) {
         if (ImGui::Begin("aux display")) {
             rgmui::Combo4("aux display type", &m_AuxDisplayType,
-                    std::vector<int>{0, 1, 2},
-                    {"overlay", "main", "txt"});
+                    std::vector<int>{0, 1, 2, 3, 4},
+                    {"overlay", "main", "txt", "dunno", "lta"});
             ImGui::Checkbox("show timer", &m_ShowTimer);
             if (ImGui::Button("reset timings")) {
                 ResetSMBCompTimingTower(&m_Competition.Tower);
@@ -5010,7 +5019,7 @@ bool SMBCompApp::OnFrame()
         ImGui::End();
     }
 
-    StepTimingTower(&m_Competition, &m_Competition.Tower, &m_Competition.Locations, &m_CompReplayComponent, &m_CompSoundComponent);
+    StepTimingTower(&m_Competition, &m_Competition.Tower, &m_Competition.Locations, &m_CompReplayComponent, &m_CompSoundComponent, &m_LTAView);
     // TODO: Step Minimap
     StepCombinedView(&m_Competition, &m_Competition.CombinedView);
     StepCombinedView(&m_Competition, &m_Competition.CombinedView2);
@@ -5047,38 +5056,40 @@ bool SMBCompApp::OnFrame()
 //            m_CompFixedOverlay.DoDisplay(&m_AuxDisplay);
         } else if (m_AuxDisplayType == 1) {
             DoAuxDisplay();
+            { // draw my name..
+                nes::PPUx ppux2(m_AuxDisplay.cols, m_AuxDisplay.rows, m_AuxDisplay.data,
+                        nes::PPUxPriorityStatus::ENABLED);
+                std::array<uint8_t, 4> tpal = {0x00, nes::PALETTE_ENTRY_WHITE, 0x20, 0x20};
+                nes::EffectInfo effects = nes::EffectInfo::Defaults();
+                nes::RenderInfo render = DefaultSMBCompRenderInfo(m_Competition);
+                ppux2.RenderString(1920 / 2 - 25 * 8, 840-20, "retrotournaments.org",
+                        m_Competition.StaticData.Font.data(), tpal.data(), render.PaletteBGR, 2,
+                        effects);
+            }
+            if (!m_CompReplayComponent.DoReplay(m_AuxDisplay))
+            {
+                if (m_Competition.CombinedView2.Active) {
+                    auto& img = m_Competition.CombinedView2.Img;
+                    if (img.cols && img.rows) {
+                        nes::PPUx ppux2(m_AuxDisplay.cols, m_AuxDisplay.rows, m_AuxDisplay.data,
+                                nes::PPUxPriorityStatus::ENABLED);
+                        auto& nesPalette = nes::DefaultPaletteBGR();
+                        int y = 1080 - 480 - 32;
+                        ppux2.DrawBorderedBox(16, y - 16, 480 + 32, 240 + 32, {0x36, 0x36, 0x36,  0x36, 0x17, 0x0f,  0x0f, 0x0f, 0x0f}, nesPalette.data(), 2);
+
+                        img.copyTo(
+                                m_AuxDisplay(cv::Rect(32, y, img.cols, img.rows)));
+                    }
+                }
+            }
         } else if (m_AuxDisplayType == 2) {
 //            m_CompTxtDisplay.DoDisplay(m_AuxDisplay);
         } else if (m_AuxDisplayType == 3) {
+        } else if (m_AuxDisplayType == 4) {
+            m_LTAView.RenderToAux(m_AuxDisplay);
         }
 
-        { // draw my name..
-            nes::PPUx ppux2(m_AuxDisplay.cols, m_AuxDisplay.rows, m_AuxDisplay.data,
-                    nes::PPUxPriorityStatus::ENABLED);
-            std::array<uint8_t, 4> tpal = {0x00, nes::PALETTE_ENTRY_WHITE, 0x20, 0x20};
-            nes::EffectInfo effects = nes::EffectInfo::Defaults();
-            nes::RenderInfo render = DefaultSMBCompRenderInfo(m_Competition);
-            ppux2.RenderString(1920 / 2 - 25 * 8, 840-20, "youtube.com/flibidydibidy",
-                    m_Competition.StaticData.Font.data(), tpal.data(), render.PaletteBGR, 2,
-                    effects);
-        }
 
-        if (!m_CompReplayComponent.DoReplay(m_AuxDisplay))
-        {
-            if (m_Competition.CombinedView2.Active) {
-                auto& img = m_Competition.CombinedView2.Img;
-                if (img.cols && img.rows) {
-                    nes::PPUx ppux2(m_AuxDisplay.cols, m_AuxDisplay.rows, m_AuxDisplay.data,
-                            nes::PPUxPriorityStatus::ENABLED);
-                    auto& nesPalette = nes::DefaultPaletteBGR();
-                    int y = 1080 - 480 - 32;
-                    ppux2.DrawBorderedBox(16, y - 16, 480 + 32, 240 + 32, {0x36, 0x36, 0x36,  0x36, 0x17, 0x0f,  0x0f, 0x0f, 0x0f}, nesPalette.data(), 2);
-
-                    img.copyTo(
-                            m_AuxDisplay(cv::Rect(32, y, img.cols, img.rows)));
-                }
-            }
-        }
 
         if (m_SharedMemory) {
             memcpy(m_SharedMemory, m_AuxDisplay.data, SHARED_MEM_MAT);
@@ -5097,6 +5108,505 @@ void SMBCompApp::LoadNamedConfig(const std::string& name)
 void SMBCompApp::SetSharedMemory(void* sharedMem)
 {
     m_SharedMemory = sharedMem;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+LTAViewApp::LTAViewApp(sta::RuntimeConfig* info, SMBComp* comp)
+    : ISMBCompSingleWindowComponent("LTAView", "ltaview", true)
+    , m_Info(info)
+    , m_Comp(comp)
+    , m_LayoutIndex(0)
+    , m_SwapFrom(-1)
+    , m_TournamentBestTime(0)
+{
+    // the 2 big with along bottom
+    for (int num_bot = 4; num_bot <= 7; num_bot++) {
+        m_Layouts.emplace_back();
+        auto& v = m_Layouts.back();
+
+        v.board.x = 256 * 3 + 20;
+        v.board.y = 40;
+
+        v.slots.emplace_back(0, 0, 3);
+        v.slots.emplace_back(1920 - 256 * 3, 0, 3);
+
+        int left = 1920 - (256 * num_bot);
+        int pad = left / (num_bot - 1);
+
+        int x = 0;
+        for (int i = 0; i < num_bot; i++) {
+            v.slots.emplace_back(x, 1080-240, 1);
+            x += 256 + pad;
+        }
+        v.slots.back().x = 1920 - 256;
+    }
+
+    // six med
+    {
+        m_Layouts.emplace_back();
+        auto & v = m_Layouts.back();
+        int p = 40;
+        v.slots.emplace_back(0, 0, 2);
+        v.slots.emplace_back(256 * 2 + p, 0, 2);
+        v.slots.emplace_back(256 * 4 + p * 2, 0, 2);
+        v.slots.emplace_back(0, 240 * 2 + p, 2);
+        v.slots.emplace_back(256 * 2 + p, 240 * 2 + p, 2);
+        v.slots.emplace_back(256 * 4 + p * 2, 240 * 2 + p, 2);
+        v.board.x = 256 * 6 + p * 3;
+        v.board.y = 40;
+    }
+    // six med with one small
+    {
+        m_Layouts.emplace_back();
+        auto & v = m_Layouts.back();
+        int p = 40;
+        v.slots.emplace_back(0, 0, 2);
+        v.slots.emplace_back(256 * 2 + p, 0, 2);
+        v.slots.emplace_back(256 * 4 + p * 2, 0, 2);
+        v.slots.emplace_back(0, 240 * 2 + p, 2);
+        v.slots.emplace_back(256 * 2 + p, 240 * 2 + p, 2);
+        v.slots.emplace_back(256 * 4 + p * 2, 240 * 2 + p, 2);
+        v.slots.emplace_back(256 * 6 + p * 3, 240 * 3 + p, 1);
+        v.board.x = 256 * 6 + p * 3;
+        v.board.y = 40;
+    }
+    m_BG = cv::Scalar(255, 0, 255);
+}
+
+void LTAViewApp::DoControls() {
+    rgmui::SliderIntExt("layout", &m_LayoutIndex, 0, static_cast<int>(m_Layouts.size()) - 1);
+
+    auto& players = m_Comp->Config.Players.Players;
+    size_t n = players.size();
+    auto init_mapping = [&](){
+        m_PlayerMapping.resize(n);
+        std::iota(m_PlayerMapping.begin(), m_PlayerMapping.end(), 0);
+    };
+    if (ImGui::Button("OneToOne")) {
+        init_mapping();
+    }
+
+    if (ImGui::CollapsingHeader("focus")) {
+        for (size_t i = 0; i < players.size(); i++) {
+            ImGui::PushID(i);
+            std::string name = players[i].Names.ShortName;
+            if (ImGui::Button(name.c_str())) {
+                if (m_PlayerMapping.size() != n) {
+                    init_mapping();
+                }
+
+                auto it = std::find(
+                        m_PlayerMapping.begin(),
+                        m_PlayerMapping.end(),
+                        static_cast<int>(i));
+
+                if (it != m_PlayerMapping.begin() &&
+                    it != m_PlayerMapping.end()) {
+
+
+                    for (auto jt = it;
+                            jt != m_PlayerMapping.begin();
+                            jt--) {
+                        *jt = *(jt - 1);
+                    }
+
+                    m_PlayerMapping.front() =
+                        static_cast<int>(i);
+                }
+
+
+            }
+            ImGui::PopID();
+        }
+    }
+
+    if (ImGui::CollapsingHeader("swap")) {
+        for (size_t i = 0; i < n; i++) {
+            size_t pi = i;
+            if (i < m_PlayerMapping.size()) {
+                pi = m_PlayerMapping[i];
+            }
+
+            std::string name = players[pi].Names.ShortName;
+            if (ImGui::Button(name.c_str())) {
+                if (m_PlayerMapping.size() != n) {
+                    init_mapping();
+                }
+
+                if (m_SwapFrom == -1) {
+                    m_SwapFrom = i;
+                } else {
+                    std::swap(m_PlayerMapping[m_SwapFrom],
+                            m_PlayerMapping[i]);
+                    m_SwapFrom = -1;
+                }
+            }
+        }
+    }
+    if (ImGui::CollapsingHeader("edit")) {
+        rgmui::InputVectorInt("map", &m_PlayerMapping);
+    }
+    if (ImGui::CollapsingHeader("show")) {
+        for (size_t i = 0; i < players.size(); i++) {
+            rgmui::TextFmt("{}", players[i].Names.FullName);
+            auto it = m_PlayerInfo.find(players[i].UniquePlayerID);
+            if (it != m_PlayerInfo.end()) {
+                ImGui::Checkbox("show pb", &it->second.show_pb);
+                ImGui::Checkbox("show tb", &it->second.show_tb);
+            }
+        }
+    }
+
+    if (ImGui::CollapsingHeader("bg")) {
+        ImGui::InputDouble("bg0", &m_BG[0]);
+        ImGui::InputDouble("bg1", &m_BG[1]);
+        ImGui::InputDouble("bg2", &m_BG[2]);
+    }
+
+    if (ImGui::CollapsingHeader("debug")) {
+        rgmui::TextFmt("m_TournamentBestTime: {}  m_TournamentBest.size(): {}",
+                m_TournamentBestTime, m_TournamentBest.size());
+        for (auto & [id, info] : m_PlayerInfo) {
+            rgmui::TextFmt("{}   current_run.size {}", id, info.current_run.size());
+            rgmui::TextFmt("{}          best_time {}", id, info.best_time);
+            rgmui::TextFmt("{}          best_text {}", id, info.best_text);
+            rgmui::TextFmt("{} personal_best.size {}", id, info.personal_best.size());
+            if (ImGui::Button("move current to pb")) {
+                std::swap(info.current_run, info.personal_best);
+                std::swap(info.current_splits, info.personal_best_splits);
+                info.current_run.clear();
+                info.current_splits.clear();
+            }
+            if (ImGui::Button("copy current to tb")) {
+                m_TournamentBest = info.current_run;
+                m_TournamentBestSplits = info.current_splits;
+            }
+            if (ImGui::CollapsingHeader("current_splits")) {
+                for (auto & v : info.current_splits) {
+                    rgmui::TextFmt("{}", v);
+                }
+            }
+            if (ImGui::CollapsingHeader("personal_best_splits")) {
+                for (auto & v : info.personal_best_splits) {
+                    rgmui::TextFmt("{}", v);
+                }
+            }
+        }
+        if (ImGui::CollapsingHeader("m_TournamentBestSplits")) {
+            for (auto & v : m_TournamentBestSplits) {
+                rgmui::TextFmt("{}", v);
+            }
+        }
+
+    }
+}
+
+void LTAViewApp::RenderToAux(cv::Mat aux) {
+    aux = m_BG;
+
+    if (m_LayoutIndex < 0 || m_LayoutIndex >= m_Layouts.size()) {
+        return;
+    }
+    auto effects = nes::EffectInfo::Defaults();
+    effects.Opacity = 0.5;
+    nes::RenderInfo render = DefaultSMBCompRenderInfo(*m_Comp);
+
+    cv::Mat q = cv::Mat::zeros(240, 256, CV_8UC3);
+
+    auto find_other = [&](int64_t el, const std::vector<SMBMessageProcessorOutputPtr>& other) {
+        int64_t seek = other.front()->Elapsed + el;
+        auto t = std::lower_bound(other.begin(), other.end(), seek,
+        [&](const SMBMessageProcessorOutputPtr& p, int64_t v){
+            return p->Elapsed < v;
+        });
+        if (t == other.end()) {
+            t = other.end() - 1;
+        }
+        return *t;
+    };
+
+    auto& layout = m_Layouts[m_LayoutIndex];
+    auto& players = m_Comp->Config.Players.Players;
+    for (size_t i = 0; i < layout.slots.size(); i++) {
+        const auto& slot = layout.slots[i];
+        if (i < players.size()) {
+            size_t pi = i;
+            if (i < m_PlayerMapping.size()) {
+                pi = m_PlayerMapping[i];
+            }
+            auto& player = players[pi];
+            auto out = GetLatestPlayerOutput(*m_Comp, player);
+            if (out) {
+                cv::Mat s = aux(cv::Rect(slot.x, slot.y, 256 * slot.scale, 240 * slot.scale));
+                nes::PPUx ppux(q.cols, q.rows, q.data, nes::PPUxPriorityStatus::ENABLED);
+                std::array<uint8_t, 4> tpal = {0x00, nes::PALETTE_ENTRY_WHITE, 0x20, 0x20};
+                std::array<uint8_t, 4> gpal = {0x00, 42, 0x20, 0x20};
+
+                rgms::RenderSMBToPPUX(out->Frame, out->FramePalette, m_Comp->StaticData.Nametables, &ppux, m_Comp->StaticData.ROM.rom);
+                auto it = m_PlayerInfo.find(player.UniquePlayerID);
+                if (out->Frame.GameEngineSubroutine != 0x00 && it != m_PlayerInfo.end()) {
+                    auto info = m_PlayerInfo[player.UniquePlayerID];
+
+                    if (info.show_pb && !info.personal_best.empty() && !info.current_run.empty()) {
+                        int64_t el = info.current_run.back()->Elapsed - info.current_run.front()->Elapsed;
+
+                        auto t = find_other(el, info.personal_best);
+                        if (t) {
+                            if (t->Frame.AID == out->Frame.AID && t->Frame.GameEngineSubroutine == out->Frame.GameEngineSubroutine) {
+                                int dx = out->Frame.APX - t->Frame.APX;
+                                for (auto oamx : t->Frame.OAMX) {
+                                    if (smb::IsMarioTile(oamx.TileIndex)) {
+                                        oamx.X -= dx;
+
+                                        ppux.RenderOAMxEntry(oamx, render, effects);
+
+                                    }
+                                }
+                                int mx, my;
+                                if (MarioInOutput(t, &mx, &my)) {
+                                    ppux.RenderString(mx - dx, my - 8, "pb",
+                                            m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 1,
+                                            effects);
+                                }
+                            }
+                        }
+                    }
+
+                    if (info.show_tb && !m_TournamentBest.empty() && !info.current_run.empty() && info.personal_best != m_TournamentBest) {
+                        int64_t el = info.current_run.back()->Elapsed - info.current_run.front()->Elapsed;
+
+                        auto t = find_other(el, m_TournamentBest);
+                        if (t) {
+                            if (t->Frame.AID == out->Frame.AID && t->Frame.GameEngineSubroutine == out->Frame.GameEngineSubroutine) {
+                                int dx = out->Frame.APX - t->Frame.APX;
+                                for (auto oamx : t->Frame.OAMX) {
+                                    if (smb::IsMarioTile(oamx.TileIndex)) {
+                                        oamx.X -= dx;
+
+                                        ppux.RenderOAMxEntry(oamx, render, effects);
+
+                                    }
+                                }
+                                int mx, my;
+                                if (MarioInOutput(t, &mx, &my)) {
+                                    ppux.RenderString(mx - dx, my - 8, "tb",
+                                            m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 1,
+                                            effects);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ppux.ResetPriority();
+                ppux.BeginOutline();
+                nes::RenderInfo render = DefaultSMBCompRenderInfo(*m_Comp);
+                ppux.RenderString(2, 2, player.Names.FullName,
+                        m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 2,
+                        nes::EffectInfo::Defaults());
+                const SMBCompPlayerTimings* timings = &m_Comp->Tower.Timings.at(player.UniquePlayerID);
+                std::string text;
+                int64_t elapsed;
+                bool finished = TimingsToText(m_Comp, timings, player, &text, &elapsed);
+                uint8_t q = (finished) ? 0x04 : 0x06;
+
+                bool pb_green = false;
+                std::string pb_diff = " --.--";
+                bool tb_green = false;
+                std::string tb_diff = " --.--";
+                if (it != m_PlayerInfo.end()) {
+                    auto info = m_PlayerInfo[player.UniquePlayerID];
+                    if (info.current_splits.size() >= 1) {
+                        size_t split_index = info.current_splits.size() - 1;
+                        if (info.finished) {
+                            split_index++;
+                        }
+
+                        if (split_index < info.personal_best_splits.size()) {
+                            int64_t d = info.current_splits[split_index] - info.personal_best_splits[split_index];
+                            if (d > 60000) {
+                                pb_diff = "+xx.xx";
+                            } else if (d < -60000) {
+                                pb_green = true;
+                                pb_diff = "-xx.xx";
+                            } else if (d >= 0) {
+                                pb_diff = fmt::format("+{}.{}", static_cast<int>(std::round(d / 1000)),
+                                                                static_cast<int>(std::round(d % 1000)) / 10);
+                            } else {
+                                pb_green = true;
+                                d *= -1;
+                                pb_diff = fmt::format("-{}.{}", static_cast<int>(std::round(d / 1000)),
+                                                                static_cast<int>(std::round(d % 1000)) / 10);
+                            }
+                        }
+
+                        if (split_index < m_TournamentBestSplits.size()) {
+                            int64_t d = info.current_splits[split_index] - m_TournamentBestSplits[split_index];
+                            if (d > 60000) {
+                                tb_diff = "+xx.xx";
+                            } else if (d < -60000) {
+                                tb_green = true;
+                                tb_diff = "-xx.xx";
+                            } else if (d >= 0) {
+                                tb_diff = fmt::format("+{}.{}", static_cast<int>(std::round(d / 1000)),
+                                                                static_cast<int>(std::round(d % 1000)) / 10);
+                            } else {
+                                tb_green = true;
+                                d *= -1;
+                                tb_diff = fmt::format("-{}.{}", static_cast<int>(std::round(d / 1000)),
+                                                                static_cast<int>(std::round(d % 1000)) / 10);
+                            }
+                        }
+                    }
+
+                }
+
+                // lol
+                while (text.size() < 8) {
+                    text = " " + text;
+                }
+                ppux.RenderString(2, 220 - 20, text,
+                        m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 1,
+                        nes::EffectInfo::Defaults());
+
+                auto p = tpal;
+                if (pb_green) {
+                    p = gpal;
+                }
+                ppux.RenderString(2 + 16, 220 - 10, pb_diff,
+                        m_Comp->StaticData.Font.data(), p.data(), render.PaletteBGR, 1,
+                        nes::EffectInfo::Defaults());
+                p = tpal;
+                if (tb_green) {
+                    p = gpal;
+                }
+                ppux.RenderString(2 + 16, 220, tb_diff,
+                        m_Comp->StaticData.Font.data(), p.data(), render.PaletteBGR, 1,
+                        nes::EffectInfo::Defaults());
+                ppux.StrokeOutlineO(2.0f, nes::PALETTE_ENTRY_BLACK, render.PaletteBGR);
+
+
+                cv::Mat m(ppux.GetHeight(), ppux.GetWidth(), CV_8UC3, ppux.GetBGROut());
+                if (slot.scale != 1) {
+                    cv::resize(m, m, {}, slot.scale, slot.scale, cv::INTER_NEAREST);
+                }
+                m.copyTo(s);
+            }
+        } else {
+         //   cv::Mat s = aux(cv::Rect(slot.x, slot.y, 256 * slot.scale, 240 * slot.scale));
+         //   s = cv::Scalar(255, 0, 0);
+        }
+    }
+
+    std::array<uint8_t, 4> tpal = {0x00, nes::PALETTE_ENTRY_WHITE, 0x20, 0x20};
+    nes::PPUx ppux(aux.cols, aux.rows, aux.data, nes::PPUxPriorityStatus::DISABLED);
+    int x = layout.board.x;
+    int y = layout.board.y;
+    ppux.BeginOutline();
+    ppux.RenderString(x, y, "leaderboard",
+            m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 3,
+            nes::EffectInfo::Defaults());
+
+    struct LeaderInfo {
+        int64_t elapsed;
+        std::string text;
+        std::string name;
+    };
+    std::vector<LeaderInfo> linfos;
+    for (auto & player & players) {
+        linfos.emplace_back();
+        auto& linfo = linfos.back();
+        linfo.elapsed = 0;
+        linfo.text = "--:--.--";
+        linfo.name = player.Names.ShortName;
+        auto it = m_PlayerInfo.find(player.UniquePlayerID);
+        if (it != m_PlayerInfo.end()) {
+            auto info = m_PlayerInfo[player.UniquePlayerID];
+            if (info.best_time != 0) {
+                linfo.elapsed = info.best_time;
+                linfo.best_text = info.best_text;
+            }
+        }
+    }
+    std::sort(linfos.begin(), linfos.end(), [&](const LeaderInfo& a, const LeaderInfo& b){
+        return a.elapsed < b.elapsed;
+    });
+    size_t c = 1;
+    for (size_t i = 0; i < linfos.size(); i++) {
+        if (i) {
+            if (linfos[i].elapsed > linfos[i - 1].elapsed) {
+                c++;
+            }
+        }
+
+        ppux.RenderString(x, y + i * 10, std::to_string(i),
+                m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 3,
+                nes::EffectInfo::Defaults());
+        ppux.RenderString(x + 10, y + i * 10, linfos[i].name,
+                m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 3,
+                nes::EffectInfo::Defaults());
+        // HERE change the spacing and shti
+        ppux.RenderString(x + 100, y + i * 10, linfos[i].text,
+                m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 3,
+                nes::EffectInfo::Defaults());
+    }
+
+
+    ppux.StrokeOutlineO(1.0f, nes::PALETTE_ENTRY_BLACK, palette.data());
+}
+
+void LTAViewApp::NoteOutput(const SMBCompPlayer& player, SMBMessageProcessorOutputPtr out, const SMBCompPlayerTimings& timings, StepTimingEvent event) {
+    uint32_t id = player.UniquePlayerID;
+    auto it = m_PlayerInfo.find(id);
+    if (it == m_PlayerInfo.end()) {
+        PlayerInfo& info = m_PlayerInfo[id];
+        info.best_time = 0;
+        info.best_text = "--:--.--";
+        info.show_pb = true;
+        info.show_tb = true;
+        info.finished = false;
+    }
+    PlayerInfo& info = m_PlayerInfo[id];
+    info.current_splits.resize(timings.SplitM2s.size());
+    for (size_t i = 0; i < info.current_splits.size(); i++) {
+        info.current_splits[i] = static_cast<int64_t>(timings.SplitM2s[i]);
+    }
+    for (size_t i = 1; i < info.current_splits.size(); i++) {
+        info.current_splits[i] = info.current_splits[i] - info.current_splits[0];
+        int64_t timems = static_cast<int64_t>(static_cast<double>(info.current_splits[i]) * nes::NTSC_MS_PER_M2);
+        info.current_splits[i] = timems;
+    }
+    if (!info.current_splits.empty()) {
+        info.current_splits[0] = 0;
+    }
+    if (event == StepTimingEvent::STARTED_RUN) {
+        info.current_run.clear();
+        info.current_run.push_back(out);
+        info.finished = false;
+    } else if (event == StepTimingEvent::END_RUN) {
+        info.current_run.clear();
+        info.finished = false;
+    } else if (event == StepTimingEvent::FINISH_RUN) {
+        info.finished = true;
+        int64_t elapsed;
+        std::string text;
+        TimingsToText(m_Comp, &timings, player, &text, &elapsed);
+        std::cout << player.Names.FullName << " finish run: " << elapsed << " " << text << std::endl;
+        if (info.best_time == 0 || elapsed < info.best_time) {
+            info.best_time = elapsed;
+            info.best_text = text;
+            info.personal_best = info.current_run;
+            info.personal_best_splits = info.current_splits;
+        }
+        info.current_run.clear();
+        if (m_TournamentBestTime == 0 || elapsed < m_TournamentBestTime) {
+            m_TournamentBestTime = elapsed;
+            m_TournamentBest = info.personal_best;
+        }
+    } else if (info.current_run.size()) {
+        info.current_run.push_back(out);
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -10159,3 +10669,5 @@ void SMBCompLatencyHandler::DoControls()
         ImGui::PopID();
     }
 }
+
+
