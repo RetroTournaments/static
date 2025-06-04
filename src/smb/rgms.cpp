@@ -5514,7 +5514,7 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
         std::string name;
     };
     std::vector<LeaderInfo> linfos;
-    for (auto & player & players) {
+    for (auto & player : players) {
         linfos.emplace_back();
         auto& linfo = linfos.back();
         linfo.elapsed = 0;
@@ -5525,7 +5525,7 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
             auto info = m_PlayerInfo[player.UniquePlayerID];
             if (info.best_time != 0) {
                 linfo.elapsed = info.best_time;
-                linfo.best_text = info.best_text;
+                linfo.text = info.best_text;
             }
         }
     }
@@ -5552,8 +5552,7 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
                 nes::EffectInfo::Defaults());
     }
 
-
-    ppux.StrokeOutlineO(1.0f, nes::PALETTE_ENTRY_BLACK, palette.data());
+    ppux.StrokeOutlineO(1.0f, nes::PALETTE_ENTRY_BLACK, render.PaletteBGR);
 }
 
 void LTAViewApp::NoteOutput(const SMBCompPlayer& player, SMBMessageProcessorOutputPtr out, const SMBCompPlayerTimings& timings, StepTimingEvent event) {
