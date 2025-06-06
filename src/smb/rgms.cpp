@@ -5500,7 +5500,7 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
     }
 
     std::array<uint8_t, 4> tpal = {0x00, nes::PALETTE_ENTRY_WHITE, 0x20, 0x20};
-    nes::PPUx ppux(aux.cols, aux.rows, aux.data, nes::PPUxPriorityStatus::DISABLED);
+    nes::PPUx ppux(aux.cols, aux.rows, aux.data, nes::PPUxPriorityStatus::ENABLED);
     int x = layout.board.x;
     int y = layout.board.y;
     ppux.BeginOutline();
