@@ -5247,13 +5247,14 @@ void LTAViewApp::DoControls() {
     if (ImGui::CollapsingHeader("edit")) {
         rgmui::InputVectorInt("map", &m_PlayerMapping);
     }
-    if (ImGui::CollapsingHeader("show")) {
+    if (ImGui::CollapsingHeader("extra")) {
         for (size_t i = 0; i < players.size(); i++) {
             rgmui::TextFmt("{}", players[i].Names.FullName);
             auto it = m_PlayerInfo.find(players[i].UniquePlayerID);
             if (it != m_PlayerInfo.end()) {
                 ImGui::Checkbox("show pb", &it->second.show_pb);
                 ImGui::Checkbox("show tb", &it->second.show_tb);
+                rgmui::InputText("name_override", &it->second.name_override);
             }
         }
     }
@@ -5272,6 +5273,13 @@ void LTAViewApp::DoControls() {
             rgmui::TextFmt("{}          best_time {}", id, info.best_time);
             rgmui::TextFmt("{}          best_text {}", id, info.best_text);
             rgmui::TextFmt("{} personal_best.size {}", id, info.personal_best.size());
+            rgmui::TextFmt("{}              coins {}", id, info.challenge.coins.size());
+            rgmui::TextFmt("{}              score {}", id, info.challenge.score.size());
+            rgmui::TextFmt("{}   mario_tiles_seen {}", id, info.challenge.mario_tiles_seen.size());
+            rgmui::TextFmt("{}   death_to         {}", id, info.challenge.death_to.size());
+            for (auto & v : info.challenge.death_to) {
+                rgmui::TextFmt("  {}", v);
+            }
             if (ImGui::Button("move current to pb")) {
                 std::swap(info.current_run, info.personal_best);
                 std::swap(info.current_splits, info.personal_best_splits);
@@ -5299,6 +5307,13 @@ void LTAViewApp::DoControls() {
             }
         }
 
+    }
+    if (ImGui::CollapsingHeader("challenge")) {
+        if (ImGui::Button("reset mario seen")) {
+            for (auto & info : m_PlayerInfo) {
+                info.challenge.mario_tiles_seen.reset();
+            }
+        }
     }
 }
 
@@ -5402,7 +5417,11 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
                 ppux.ResetPriority();
                 ppux.BeginOutline();
                 nes::RenderInfo render = DefaultSMBCompRenderInfo(*m_Comp);
-                ppux.RenderString(2, 2, player.Names.FullName,
+                std::string nm = player.Names.FullName;
+                if (!info.name_override.empty()) {
+                    nm = info.name_override;
+                }
+                ppux.RenderString(2, 2, nm,
                         m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 2,
                         nes::EffectInfo::Defaults());
                 const SMBCompPlayerTimings* timings = &m_Comp->Tower.Timings.at(player.UniquePlayerID);
@@ -5508,6 +5527,7 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
             m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 3,
             nes::EffectInfo::Defaults());
 
+
     struct LeaderInfo {
         int64_t elapsed;
         std::string text;
@@ -5606,6 +5626,53 @@ void LTAViewApp::NoteOutput(const SMBCompPlayer& player, SMBMessageProcessorOutp
     } else if (info.current_run.size()) {
         info.current_run.push_back(out);
     }
+
+
+    info.challenge.coins = static_cast<int>(out->Frame.CoinTiles[0]) * 10 + static_cast<int>(out->Frame.CoinTiles[1]);
+    int v = 1000000;
+    int score = 0;
+    for (int i = 0; i < 7; i++) {
+        score += static_cast<int>(out->Frame.ScoreTiles[i]) * v;
+        v /= 10;
+    }
+    info.score = score;
+
+    for (auto & oamx : out->Frame.OAMX) {
+        if (IsMarioTile(oamx.TileIndex)) {
+            mario_tiles_seen.insert(oamx.TileIndex);
+        }
+
+        uint64_t uid = static_cast<uint64_t>(oamx.TileIndex);
+        uid <<= 8;
+        uid += static_cast<uint64_t>(oamx.Attributes & 0b11000011);
+        for (int i = 0; i < 4; i++) {
+            uid <<= 8;
+            uid += oamx.TilePalette[i];
+        }
+
+    }
+
+    if (out->Frame.EventMusicQueue) {
+        auto mus = ToMusic('e', out->Frame.EventMusicQueue);
+        if (mus == smb::MusicTrack::DEATH_MUSIC) {
+            int mx, my;
+            if (MarioInOutput(out, &mx, &my)) {
+                for (auto & oamx : out->Frame.OAMX) {
+                    if (IsMarioTile(oamx.TileIndex)) {
+                        continue;
+                    }
+                    int dx = oamx.x - mx;
+                    int dy = oamx.y - my;
+                    if (std::abs(dx) < 32 || std::abs(dy) < 32) {
+                        death_to.insert(oamx.TileIndex);
+                    }
+                }
+            }
+        }
+    }
+
+
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////

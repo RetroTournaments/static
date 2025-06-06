@@ -2049,12 +2049,24 @@ private:
 
         bool show_pb;
         bool show_tb;
+
+        std::string name_override;
+
+        struct {
+            int coins;
+            int score;
+            int blocks_broken;
+            std::vector<nes::OAMxEntry> oam_seen;
+            std::unordered_set<uint8_t> mario_tiles_seen;
+            std::unordered_set<uint8_t> death_to;
+        } challenge;
     };
     std::unordered_map<uint32_t, PlayerInfo> m_PlayerInfo;
 
     int64_t m_TournamentBestTime;
     std::vector<SMBMessageProcessorOutputPtr> m_TournamentBest;
     std::vector<int64_t> m_TournamentBestSplits;
+
 };
 
 ////////////////////////////////////////////////////////////////////////////////
