@@ -60,6 +60,22 @@ bool sta::internesceptor::IsMessageParseError(MessageParseStatus status)
     return true;
 }
 
+static smb::MusicTrack ToMusic(char typ, uint8_t val) {
+    if (val == 128) {
+        return smb::MusicTrack::SILENCE;
+    }
+    if (typ == 'a') {
+        return static_cast<smb::MusicTrack>(val);
+    }
+    if (typ == 'e') {
+        uint32_t v = val;
+        v <<= 8;
+        return static_cast<smb::MusicTrack>(v);
+    }
+    return smb::MusicTrack::SILENCE;
+}
+
+
 void sta::internesceptor::DebugPrintMessage(const MessageParseInfo& message, std::ostream& os)
 {
     auto OutByte = [&](uint8_t byte) {
@@ -5273,8 +5289,8 @@ void LTAViewApp::DoControls() {
             rgmui::TextFmt("{}          best_time {}", id, info.best_time);
             rgmui::TextFmt("{}          best_text {}", id, info.best_text);
             rgmui::TextFmt("{} personal_best.size {}", id, info.personal_best.size());
-            rgmui::TextFmt("{}              coins {}", id, info.challenge.coins.size());
-            rgmui::TextFmt("{}              score {}", id, info.challenge.score.size());
+            rgmui::TextFmt("{}              coins {}", id, info.challenge.coins);
+            rgmui::TextFmt("{}              score {}", id, info.challenge.score);
             rgmui::TextFmt("{}   mario_tiles_seen {}", id, info.challenge.mario_tiles_seen.size());
             rgmui::TextFmt("{}   death_to         {}", id, info.challenge.death_to.size());
             for (auto & v : info.challenge.death_to) {
@@ -5309,9 +5325,9 @@ void LTAViewApp::DoControls() {
 
     }
     if (ImGui::CollapsingHeader("challenge")) {
-        if (ImGui::Button("reset mario seen")) {
-            for (auto & info : m_PlayerInfo) {
-                info.challenge.mario_tiles_seen.reset();
+        if (ImGui::Button("clear mario seen")) {
+            for (auto & [playerid, info] : m_PlayerInfo) {
+                info.challenge.mario_tiles_seen.clear();
             }
         }
     }
@@ -5418,8 +5434,11 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
                 ppux.BeginOutline();
                 nes::RenderInfo render = DefaultSMBCompRenderInfo(*m_Comp);
                 std::string nm = player.Names.FullName;
-                if (!info.name_override.empty()) {
-                    nm = info.name_override;
+                if (it != m_PlayerInfo.end()) {
+                    auto info = m_PlayerInfo[player.UniquePlayerID];
+                    if (!info.name_override.empty()) {
+                        nm = info.name_override;
+                    }
                 }
                 ppux.RenderString(2, 2, nm,
                         m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 2,
@@ -5628,18 +5647,18 @@ void LTAViewApp::NoteOutput(const SMBCompPlayer& player, SMBMessageProcessorOutp
     }
 
 
-    info.challenge.coins = static_cast<int>(out->Frame.CoinTiles[0]) * 10 + static_cast<int>(out->Frame.CoinTiles[1]);
+    info.challenge.coins = static_cast<int>(out->Frame.TitleScreen.CoinTiles[0]) * 10 + static_cast<int>(out->Frame.TitleScreen.CoinTiles[1]);
     int v = 1000000;
     int score = 0;
     for (int i = 0; i < 7; i++) {
-        score += static_cast<int>(out->Frame.ScoreTiles[i]) * v;
+        score += static_cast<int>(out->Frame.TitleScreen.ScoreTiles[i]) * v;
         v /= 10;
     }
-    info.score = score;
+    info.challenge.score = score;
 
     for (auto & oamx : out->Frame.OAMX) {
-        if (IsMarioTile(oamx.TileIndex)) {
-            mario_tiles_seen.insert(oamx.TileIndex);
+        if (smb::IsMarioTile(oamx.TileIndex)) {
+            info.challenge.mario_tiles_seen.insert(oamx.TileIndex);
         }
 
         uint64_t uid = static_cast<uint64_t>(oamx.TileIndex);
@@ -5658,13 +5677,13 @@ void LTAViewApp::NoteOutput(const SMBCompPlayer& player, SMBMessageProcessorOutp
             int mx, my;
             if (MarioInOutput(out, &mx, &my)) {
                 for (auto & oamx : out->Frame.OAMX) {
-                    if (IsMarioTile(oamx.TileIndex)) {
+                    if (smb::IsMarioTile(oamx.TileIndex)) {
                         continue;
                     }
-                    int dx = oamx.x - mx;
-                    int dy = oamx.y - my;
+                    int dx = oamx.X - mx;
+                    int dy = oamx.Y - my;
                     if (std::abs(dx) < 32 || std::abs(dy) < 32) {
-                        death_to.insert(oamx.TileIndex);
+                        info.challenge.death_to.insert(oamx.TileIndex);
                     }
                 }
             }
@@ -8670,21 +8689,6 @@ void SMBCompSoundComponent::PlaySoundEffect(uint32_t playerId, smb::SoundEffect 
     if (it == m_Competition->StaticData.Sounds.SoundEffects.end()) return;
 
     Mix_PlayChannel(-1, it->second->Chunk, 0);
-}
-
-static smb::MusicTrack ToMusic(char typ, uint8_t val) {
-    if (val == 128) {
-        return smb::MusicTrack::SILENCE;
-    }
-    if (typ == 'a') {
-        return static_cast<smb::MusicTrack>(val);
-    }
-    if (typ == 'e') {
-        uint32_t v = val;
-        v <<= 8;
-        return static_cast<smb::MusicTrack>(v);
-    }
-    return smb::MusicTrack::SILENCE;
 }
 
 static smb::SoundEffect ToEffect(char typ, uint8_t val) {

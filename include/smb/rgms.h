@@ -32,6 +32,7 @@
 
 #include <cstdint>
 #include <thread>
+#include <unordered_set>
 
 #include "nlohmann/json.hpp"
 #include "zmq.hpp"
