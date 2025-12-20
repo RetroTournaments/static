@@ -48,6 +48,7 @@ enum SimpleTimeFormatFlags : uint8_t {
     MSCS = 0b101100,
     HMS  = 0b001110,
     MINS = 0b001100,
+    MSMS = 0b011100,
 };
 std::string SimpleDurationFormat(const mclock::duration& duration, SimpleTimeFormatFlags flags);
 std::string SimpleMillisFormat(int64_t millis, SimpleTimeFormatFlags flags);

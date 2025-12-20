@@ -140,6 +140,9 @@ std::string sta::util::SimpleMillisFormat(int64_t millis, SimpleTimeFormatFlags 
                 seconds += 1;
             }
         }
+        if (seconds == 60 && flags & SimpleTimeFormatFlags::M) {
+            seconds = 59;
+        }
         OutNum(seconds, 2);
     }
 

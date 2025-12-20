@@ -473,7 +473,7 @@ public:
     virtual SMBMessageProcessorOutputPtr GetLatestProcessorOutput() override;
     virtual SMBMessageProcessorOutputPtr GetNextProcessorOutput() override;
 
-    void GetAllOutputs(std::vector<SMBMessageProcessorOutputPtr>* outputs);
+    void GetAllOutputs(std::vector<SMBMessageProcessorOutputPtr>* outputs, bool include_off);
 
     void SeekFromStartTo(int64_t millis);
     void StartAt(int64_t millis);
@@ -1501,10 +1501,14 @@ SMBMessageProcessorOutputPtr GetLatestPlayerOutput(SMBComp& comp, const SMBCompP
 class SMBCompReplayComponent;
 class SMBCompSoundComponent;
 class LTAViewApp;
+class LeaderboardViewApp;
 void StepTimingTower(SMBComp* comp, SMBCompTimingTower* tower, SMBCompPlayerLocations* locations,
-        SMBCompReplayComponent* replay, SMBCompSoundComponent* sound, LTAViewApp* lta);
+        SMBCompReplayComponent* replay, SMBCompSoundComponent* sound, LTAViewApp* lta,
+        LeaderboardViewApp* lb);
 void StepCombinedView(SMBComp* comp, SMBCompCombinedViewInfo* view);
 bool TimingsToText(SMBComp* comp, const SMBCompPlayerTimings* timings, const SMBCompPlayer& player,
+        std::string* text, int64_t* elapsedt = nullptr);
+bool TimingsToText2(SMBComp* comp, const SMBCompPlayerTimings* timings, const SMBCompPlayer& player,
         std::string* text, int64_t* elapsedt = nullptr);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2070,6 +2074,51 @@ private:
 
 };
 
+class LeaderboardViewApp : public ISMBCompSingleWindowComponent
+{
+public:
+    LeaderboardViewApp(sta::RuntimeConfig* info, SMBComp* comp);
+    ~LeaderboardViewApp() = default;
+
+    virtual void DoControls() override final;
+    void RenderToAux(cv::Mat aux);
+    void NoteOutput(const SMBCompPlayer& player, SMBMessageProcessorOutputPtr out, const SMBCompPlayerTimings& timings, StepTimingEvent event);
+
+private:
+    sta::RuntimeConfig* m_Info;
+    SMBComp* m_Comp;
+    cv::Scalar m_BG;
+    std::string m_Name;
+
+    std::vector<std::string> m_Lines;
+};
+
+class TimerComponent : public ISMBCompSingleWindowComponent
+{
+public:
+    TimerComponent(sta::RuntimeConfig* info, SMBComp* comp);
+    ~TimerComponent() = default;
+
+    virtual void DoControls() override final;
+    void RenderToAux(cv::Mat aux);
+
+private:
+    std::string Left();
+
+    sta::RuntimeConfig* m_Info;
+    SMBComp* m_Comp;
+
+    int m_X;
+    int m_Y;
+
+    int m_DurationMillis;
+
+    bool m_Visible;
+    bool m_Paused;
+    int m_Elapsed;
+    util::mclock::time_point m_Start;
+};
+
 ////////////////////////////////////////////////////////////////////////////////
 
 #define SHARED_MEM_SIZE 6220900
@@ -2126,6 +2175,8 @@ private:
     SMBCompTournamentComponent m_CompTournamentComponent;
     SMBCompLatencyHandler m_CompLatencyHandler;
     LTAViewApp m_LTAView;
+    LeaderboardViewApp m_LeaderboardView;
+    TimerComponent m_TimerComponent;
 };
 
 class SMBCompAppAux : public rgmui::IApplication
@@ -2257,6 +2308,11 @@ private:
     //};
     //std::vector<int64_t> m_Time;
     //std::vector<TimeLineInfo> m_TimelineInfo;
+
+    std::vector<SMBMessageProcessorOutputPtr> m_Outputs;
+    int m_Index;
+    int m_Start;
+    int m_End;
 };
 
 

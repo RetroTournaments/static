@@ -40,7 +40,7 @@ enum RamAddress : uint16_t
     AREA_DATA               = 0x00e7,
     AREA_DATA_LOW           = 0x00e7,
     AREA_DATA_HIGH          = 0x00e8,
-    SPRITE_DATA             = 0x0200,
+    SPRITE_DATA             = 0x0200, // 0x100 in length
     SCREENEDGE_PAGELOC      = 0x071a,
     SCREENEDGE_X_POS        = 0x071c,
     HORIZONTAL_SCROLL       = 0x073f,
@@ -60,7 +60,7 @@ enum RamAddress : uint16_t
     // https://github.com/Kolpa/FF1Bot/blob/master/emulator/luaScripts/SMB-HitBoxes.lua
     ENEMY_FLAG              = 0x000f,
     MARIO_BOUNDING_BOX      = 0x04ac, // ulx, uly, drx, dry
-    ENEMY_BOUNDING_BOX      = 0x04b0,
+    ENEMY_BOUNDING_BOX      = 0x04b0, // ulx ,uly, drx, dry x 5
 
     PAUSE_SOUND_QUEUE       = 0x00fa,
     AREA_MUSIC_QUEUE        = 0x00fb,

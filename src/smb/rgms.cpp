@@ -1195,7 +1195,7 @@ SMBMessageProcessorOutputPtr SMBSerialRecording::GetNextProcessorOutput()
     return m_SerialProcessor.GetNextProcessorOutput();
 }
 
-void SMBSerialRecording::GetAllOutputs(std::vector<SMBMessageProcessorOutputPtr>* outputs)
+void SMBSerialRecording::GetAllOutputs(std::vector<SMBMessageProcessorOutputPtr>* outputs, bool include_off)
 {
     if (!outputs) return;
 
@@ -1224,7 +1224,9 @@ void SMBSerialRecording::GetAllOutputs(std::vector<SMBMessageProcessorOutputPtr>
                     out->UserM2 = out->M2Count - startM2;
                 }
             }
-            outputs->push_back(out);
+            if (include_off || out->ConsolePoweredOn) {
+                outputs->push_back(out);
+            }
         }
     }
 
@@ -2579,6 +2581,7 @@ SMBCompConfigurationComponent::~SMBCompConfigurationComponent()
 
 void SMBCompConfigurationComponent::LoadNamedConfig(const std::string& name)
 {
+    std::cout << "load name" << name << std::endl;
     m_SaveLoadComponent->LoadNamedConfig(name);
 }
 
@@ -4448,7 +4451,7 @@ static void ReconcileTargetAndDrawState(const TimingTowerState& target, TimingTo
 }
 
 void sta::rgms::StepTimingTower(SMBComp* comp, SMBCompTimingTower* tower, SMBCompPlayerLocations* locations,
-        SMBCompReplayComponent* replay, SMBCompSoundComponent* sound, LTAViewApp* lta)
+        SMBCompReplayComponent* replay, SMBCompSoundComponent* sound, LTAViewApp* lta, LeaderboardViewApp* lb)
 {
     const std::vector<SMBCompPlayer>& players = comp->Config.Players.Players;
     for (auto & player : players) {
@@ -4474,6 +4477,7 @@ void sta::rgms::StepTimingTower(SMBComp* comp, SMBCompTimingTower* tower, SMBCom
                 replay->NoteOutput(player, out);
                 sound->NoteOutput(player, out);
                 lta->NoteOutput(player, out, *timings, event);
+                lb->NoteOutput(player, out, *timings, event);
             }
         }
     }
@@ -4782,11 +4786,14 @@ SMBCompApp::SMBCompApp(sta::RuntimeConfig* info)
     , m_CompTournamentComponent(info, &m_Competition)
     , m_CompLatencyHandler(info, &m_Competition)
     , m_LTAView(info, &m_Competition)
+    , m_LeaderboardView(info, &m_Competition)
+    , m_TimerComponent(info, &m_Competition)
     , m_SharedMemory(nullptr)
     , m_AuxVisibleInPrimary(true)
     , m_AuxVisibleScale(0.24)
     , m_AuxDisplayType(4)
     //, m_AuxDisplayType(1)
+    //, m_AuxDisplayType(5)
     , m_CountingDown(false)
     , m_ShowTimer(true)
 {
@@ -4812,6 +4819,8 @@ SMBCompApp::SMBCompApp(sta::RuntimeConfig* info)
     RegisterComponent(&m_CompTournamentComponent);
     RegisterComponent(&m_CompLatencyHandler);
     RegisterComponent(&m_LTAView);
+    RegisterComponent(&m_LeaderboardView);
+    RegisterComponent(&m_TimerComponent);
 
     m_AuxDisplay = cv::Mat::zeros(1080, 1920, CV_8UC3);
 }
@@ -4984,6 +4993,8 @@ bool SMBCompApp::OnFrame()
             m_CompTournamentComponent.DoMenuItem();
             m_CompLatencyHandler.DoMenuItem();
             m_LTAView.DoMenuItem();
+            m_LeaderboardView.DoMenuItem();
+            m_TimerComponent.DoMenuItem();
             bool v = m_AuxVisibleInPrimary;
             if (ImGui::MenuItem("Aux In Primary", NULL, v)) {
                 m_AuxVisibleInPrimary = !m_AuxVisibleInPrimary;
@@ -5003,8 +5014,8 @@ bool SMBCompApp::OnFrame()
     if (m_AuxVisibleInPrimary) {
         if (ImGui::Begin("aux display")) {
             rgmui::Combo4("aux display type", &m_AuxDisplayType,
-                    std::vector<int>{0, 1, 2, 3, 4},
-                    {"overlay", "main", "txt", "dunno", "lta"});
+                    std::vector<int>{0, 1, 2, 3, 4, 5},
+                    {"overlay", "main", "txt", "dunno", "lta", "lb"});
             ImGui::Checkbox("show timer", &m_ShowTimer);
             if (ImGui::Button("reset timings")) {
                 ResetSMBCompTimingTower(&m_Competition.Tower);
@@ -5024,10 +5035,16 @@ bool SMBCompApp::OnFrame()
             }
 
             //cv::Mat m = opencvext::ResizePrefNearest(m_AuxDisplay, m_AuxVisibleScale);
-            cv::Mat m(m_AuxDisplay.rows / 4, m_AuxDisplay.cols / 4, m_AuxDisplay.type());
+            //cv::Mat m(m_AuxDisplay.rows / 4, m_AuxDisplay.cols / 4, m_AuxDisplay.type());
+            //for (int y = 0; y < m.rows; y++) {
+            //    for (int x = 0; x < m.cols; x++) {
+            //        m.at<cv::Vec3b>(y, x) = m_AuxDisplay.at<cv::Vec3b>(y * 4, x * 4);
+            //    }
+            //}
+            cv::Mat m(m_AuxDisplay.rows / 2, m_AuxDisplay.cols / 2, m_AuxDisplay.type());
             for (int y = 0; y < m.rows; y++) {
                 for (int x = 0; x < m.cols; x++) {
-                    m.at<cv::Vec3b>(y, x) = m_AuxDisplay.at<cv::Vec3b>(y * 4, x * 4);
+                    m.at<cv::Vec3b>(y, x) = m_AuxDisplay.at<cv::Vec3b>(y * 2, x * 2);
                 }
             }
             rgmui::MatAnnotator anno("ax", m);
@@ -5035,7 +5052,7 @@ bool SMBCompApp::OnFrame()
         ImGui::End();
     }
 
-    StepTimingTower(&m_Competition, &m_Competition.Tower, &m_Competition.Locations, &m_CompReplayComponent, &m_CompSoundComponent, &m_LTAView);
+    StepTimingTower(&m_Competition, &m_Competition.Tower, &m_Competition.Locations, &m_CompReplayComponent, &m_CompSoundComponent, &m_LTAView, &m_LeaderboardView);
     // TODO: Step Minimap
     StepCombinedView(&m_Competition, &m_Competition.CombinedView);
     StepCombinedView(&m_Competition, &m_Competition.CombinedView2);
@@ -5103,6 +5120,9 @@ bool SMBCompApp::OnFrame()
         } else if (m_AuxDisplayType == 3) {
         } else if (m_AuxDisplayType == 4) {
             m_LTAView.RenderToAux(m_AuxDisplay);
+            m_TimerComponent.RenderToAux(m_AuxDisplay);
+        } else if (m_AuxDisplayType == 5) {
+            m_LeaderboardView.RenderToAux(m_AuxDisplay);
         }
 
 
@@ -5126,6 +5146,168 @@ void SMBCompApp::SetSharedMemory(void* sharedMem)
     m_SharedMemory = sharedMem;
 }
 
+LeaderboardViewApp::LeaderboardViewApp(sta::RuntimeConfig* info, SMBComp* comp)
+    : ISMBCompSingleWindowComponent("LeaderboardViewApp", "lbview", true)
+    , m_Info(info)
+    , m_Comp(comp)
+{
+    m_BG = cv::Scalar(0, 255, 0);
+    m_Name = "warpless div 2";
+}
+
+void LeaderboardViewApp::DoControls() {
+    if (ImGui::CollapsingHeader("bg")) {
+        ImGui::InputDouble("bg0", &m_BG[0]);
+        ImGui::InputDouble("bg1", &m_BG[1]);
+        ImGui::InputDouble("bg2", &m_BG[2]);
+    }
+    rgmui::InputText("name", &m_Name);
+    if (ImGui::Button("read lb.txt")) {
+        m_Lines.clear();
+        std::ifstream ifs(m_Info->StaticDirectory + "/lb.txt");
+        std::string line;
+        while (std::getline(ifs, line)) {
+            m_Lines.push_back(line);
+        }
+    }
+    int i = 0;
+    for (auto & line : m_Lines) {
+        std::string label = fmt::format("line {}", i++);
+        rgmui::InputText(label.c_str(), &line);
+    }
+    if (ImGui::Button("push back")) {
+        m_Lines.emplace_back();
+    }
+}
+
+void LeaderboardViewApp::RenderToAux(cv::Mat aux) {
+    cv::Mat m(1080 / 3, 1920 / 2, CV_8UC3);
+    m = m_BG;
+
+    nes::PPUx ppux(m.cols, m.rows, m.data,
+                    nes::PPUxPriorityStatus::ENABLED);
+
+    int y = 80;
+
+    std::string str = m_Name;
+    int sx = 2;
+    int sy = 3;
+    std::array<uint8_t, 4> tpal = {0x00, nes::PALETTE_ENTRY_WHITE, 0x20, 0x20};
+    auto effects = nes::EffectInfo::Defaults();
+    nes::RenderInfo render = DefaultSMBCompRenderInfo(*m_Comp);
+    ppux.BeginOutline();
+    ppux.RenderString((m.cols / 2) - (str.size() * 8 * sx) / 2,
+                      y, str,
+                      m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, sx,
+                      effects);
+
+    y += 8 * sy + 4;
+
+    for (auto & line : m_Lines) {
+        ppux.RenderString(180, y, line,
+                      m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, sx,
+                      effects);
+
+        y += 8 * sy + 4;
+    }
+
+
+
+
+
+
+    ppux.StrokeOutlineO(3.0f, nes::PALETTE_ENTRY_BLACK, render.PaletteBGR);
+    cv::resize(m, m, {1920, 1080}, 0, 0, cv::INTER_NEAREST);
+    m.copyTo(aux);
+}
+
+void LeaderboardViewApp::NoteOutput(const SMBCompPlayer& player, SMBMessageProcessorOutputPtr out, const SMBCompPlayerTimings& timings, StepTimingEvent event) {
+    if (event == StepTimingEvent::FINISH_RUN) {
+        int64_t elapsed;
+        std::string text;
+        TimingsToText(m_Comp, &timings, player, &text, &elapsed);
+
+    }
+}
+
+TimerComponent::TimerComponent(sta::RuntimeConfig* info, SMBComp* comp)
+    : ISMBCompSingleWindowComponent("TimerComponent", "timer", true)
+    , m_Info(info)
+    , m_Comp(comp)
+    , m_X(0)
+    , m_Y(0)
+    , m_Paused(true)
+    , m_Elapsed(0)
+    , m_Visible(true)
+{
+    m_DurationMillis = (60 * 60 * 1000 * 3) / 2;
+}
+
+void TimerComponent::RenderToAux(cv::Mat aux) {
+    if (!m_Visible) {
+        return;
+    }
+    nes::EffectInfo effects = nes::EffectInfo::Defaults();
+    nes::RenderInfo render = DefaultSMBCompRenderInfo(*m_Comp);
+    cv::Mat m = cv::Mat::zeros(8*2+10, 7*8*2+10, CV_8UC3);
+    nes::PPUx ppux(m.cols, m.rows, m.data, nes::PPUxPriorityStatus::ENABLED);
+    ppux.DrawBorderedBox(0, 0, m.cols, m.rows, {0x36, 0x36, 0x36,  0x36, 0x17, 0x0f,  0x0f, 0x0f, 0x0f}, render.PaletteBGR, 2);
+    std::array<uint8_t, 4> tpal = {0x00, nes::PALETTE_ENTRY_WHITE, 0x20, 0x20};
+    ppux.ResetPriority();
+    ppux.BeginOutline();
+    ppux.RenderString(5, 7, Left(),
+                      m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 2,
+                      effects);
+    ppux.StrokeOutlineO(2.0f, nes::PALETTE_ENTRY_BLACK, render.PaletteBGR);
+
+    cv::resize(m, m, {m.cols * 2, m.rows * 3}, 0, 0, cv::INTER_NEAREST);
+
+    {
+        int w = std::min(1920 - m_X, m.cols);
+        int h = std::min(1080 - m_Y, m.rows);
+
+        m(cv::Rect(0, 0, w, h)).copyTo(aux(cv::Rect(m_X, m_Y, w, h)));
+    }
+}
+
+void TimerComponent::DoControls() {
+    ImGui::Checkbox("visible", &m_Visible);
+    rgmui::SliderIntExt("x", &m_X, 0, 1919);
+    rgmui::SliderIntExt("y", &m_Y, 0, 1079);
+    ImGui::InputInt("duration", &m_DurationMillis);
+    if (m_Paused) {
+        if (ImGui::Button("unpause")) {
+            m_Paused = false;
+            m_Start = util::Now();
+        }
+    } else {
+        if (ImGui::Button("pause")) {
+            m_Paused = true;
+            m_Elapsed += util::ElapsedMillisFrom(m_Start);
+        }
+    }
+    if (ImGui::Button("reset")) {
+        m_Paused = true;
+        m_Elapsed = 0;
+    }
+
+    rgmui::TextFmt("{}", Left());
+
+}
+
+std::string TimerComponent::Left() {
+    int elapsed = m_Elapsed;
+    if (!m_Paused) {
+        elapsed += util::ElapsedMillisFrom(m_Start);
+    }
+    int left = m_DurationMillis - elapsed;
+    if (left < 0) {
+        left = 0;
+    }
+
+    return util::SimpleMillisFormat(left, util::SimpleTimeFormatFlags::HMS);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 LTAViewApp::LTAViewApp(sta::RuntimeConfig* info, SMBComp* comp)
@@ -5137,53 +5319,58 @@ LTAViewApp::LTAViewApp(sta::RuntimeConfig* info, SMBComp* comp)
     , m_TournamentBestTime(0)
 {
     // the 2 big with along bottom
-    for (int num_bot = 4; num_bot <= 7; num_bot++) {
+    //for (int num_bot = 4; num_bot <= 7; num_bot++) {
+    for (int num_bot = 5; num_bot <= 5; num_bot++) {
+        int p = 20;
         m_Layouts.emplace_back();
         auto& v = m_Layouts.back();
 
-        v.board.x = 256 * 3 + 20;
+        v.board.x = 256 * 3 + 28;
         v.board.y = 40;
 
-        v.slots.emplace_back(0, 0, 3);
-        v.slots.emplace_back(1920 - 256 * 3, 0, 3);
+        v.slots.emplace_back(p, p, 3);
+        v.slots.emplace_back(1920 - 256 * 3 - p, p, 3);
 
-        int left = 1920 - (256 * num_bot);
+        int left = (1920 - p * 2) - (256 * num_bot);
         int pad = left / (num_bot - 1);
 
-        int x = 0;
+
+        int x = p;
         for (int i = 0; i < num_bot; i++) {
-            v.slots.emplace_back(x, 1080-240, 1);
+            v.slots.emplace_back(x, 1080-240 - p, 1);
             x += 256 + pad;
         }
-        v.slots.back().x = 1920 - 256;
+        v.slots.back().x = 1920 - 256 - p;
     }
 
     // six med
-    {
+    if (false) {
         m_Layouts.emplace_back();
         auto & v = m_Layouts.back();
-        int p = 40;
-        v.slots.emplace_back(0, 0, 2);
-        v.slots.emplace_back(256 * 2 + p, 0, 2);
-        v.slots.emplace_back(256 * 4 + p * 2, 0, 2);
-        v.slots.emplace_back(0, 240 * 2 + p, 2);
-        v.slots.emplace_back(256 * 2 + p, 240 * 2 + p, 2);
-        v.slots.emplace_back(256 * 4 + p * 2, 240 * 2 + p, 2);
+        int p = 20;
+        int s = 15;
+        v.slots.emplace_back(s + 0, s + 0, 2);
+        v.slots.emplace_back(s + 256 * 2 + p, s + 0, 2);
+        v.slots.emplace_back(s + 256 * 4 + p * 2, s + 0, 2);
+        v.slots.emplace_back(s + 0, s + 240 * 2 + p, 2);
+        v.slots.emplace_back(s + 256 * 2 + p, s + 240 * 2 + p, 2);
+        v.slots.emplace_back(s + 256 * 4 + p * 2, s + 240 * 2 + p, 2);
         v.board.x = 256 * 6 + p * 3;
         v.board.y = 40;
     }
     // six med with one small
-    {
+    if (true) {
         m_Layouts.emplace_back();
         auto & v = m_Layouts.back();
-        int p = 40;
-        v.slots.emplace_back(0, 0, 2);
-        v.slots.emplace_back(256 * 2 + p, 0, 2);
-        v.slots.emplace_back(256 * 4 + p * 2, 0, 2);
-        v.slots.emplace_back(0, 240 * 2 + p, 2);
-        v.slots.emplace_back(256 * 2 + p, 240 * 2 + p, 2);
-        v.slots.emplace_back(256 * 4 + p * 2, 240 * 2 + p, 2);
-        v.slots.emplace_back(256 * 6 + p * 3, 240 * 3 + p, 1);
+        int p = 20;
+        int s = 15;
+        v.slots.emplace_back(s + 0, s + 0, 2);
+        v.slots.emplace_back(s + 256 * 2 + p, s + 0, 2);
+        v.slots.emplace_back(s + 256 * 4 + p * 2, s + 0, 2);
+        v.slots.emplace_back(s + 0, s + 240 * 2 + p, 2);
+        v.slots.emplace_back(s + 256 * 2 + p, s + 240 * 2 + p, 2);
+        v.slots.emplace_back(s + 256 * 4 + p * 2, s + 240 * 2 + p, 2);
+        v.slots.emplace_back(s + 256 * 6 + p * 3, s + 240 * 3 + p, 1);
         v.board.x = 256 * 6 + p * 3;
         v.board.y = 40;
     }
@@ -5343,7 +5530,6 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
     effects.Opacity = 0.5;
     nes::RenderInfo render = DefaultSMBCompRenderInfo(*m_Comp);
 
-    cv::Mat q = cv::Mat::zeros(240, 256, CV_8UC3);
 
     auto find_other = [&](int64_t el, const std::vector<SMBMessageProcessorOutputPtr>& other) {
         int64_t seek = other.front()->Elapsed + el;
@@ -5361,6 +5547,9 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
     auto& players = m_Comp->Config.Players.Players;
     for (size_t i = 0; i < layout.slots.size(); i++) {
         const auto& slot = layout.slots[i];
+            cv::Mat s = aux(cv::Rect(slot.x, slot.y, 256 * slot.scale, 240 * slot.scale));
+            s = cv::Scalar(255, 0, 0);
+
         if (i < players.size()) {
             size_t pi = i;
             if (i < m_PlayerMapping.size()) {
@@ -5370,6 +5559,7 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
             auto out = GetLatestPlayerOutput(*m_Comp, player);
             if (out) {
                 cv::Mat s = aux(cv::Rect(slot.x, slot.y, 256 * slot.scale, 240 * slot.scale));
+                cv::Mat q = cv::Mat::zeros(240, 256, CV_8UC3);
                 nes::PPUx ppux(q.cols, q.rows, q.data, nes::PPUxPriorityStatus::ENABLED);
                 std::array<uint8_t, 4> tpal = {0x00, nes::PALETTE_ENTRY_WHITE, 0x20, 0x20};
                 std::array<uint8_t, 4> gpal = {0x00, 42, 0x20, 0x20};
@@ -5384,7 +5574,7 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
 
                         auto t = find_other(el, info.personal_best);
                         if (t) {
-                            if (t->Frame.AID == out->Frame.AID && t->Frame.GameEngineSubroutine == out->Frame.GameEngineSubroutine) {
+                            if (t->Frame.AID == out->Frame.AID) {
                                 int dx = out->Frame.APX - t->Frame.APX;
                                 for (auto oamx : t->Frame.OAMX) {
                                     if (smb::IsMarioTile(oamx.TileIndex)) {
@@ -5447,7 +5637,7 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
                 std::string text;
                 int64_t elapsed;
                 bool finished = TimingsToText(m_Comp, timings, player, &text, &elapsed);
-                uint8_t q = (finished) ? 0x04 : 0x06;
+                //uint8_t q = (finished) ? 0x04 : 0x06;
 
                 bool pb_green = false;
                 std::string pb_diff = " --.--";
@@ -5532,8 +5722,8 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
                 m.copyTo(s);
             }
         } else {
-         //   cv::Mat s = aux(cv::Rect(slot.x, slot.y, 256 * slot.scale, 240 * slot.scale));
-         //   s = cv::Scalar(255, 0, 0);
+        //    cv::Mat s = aux(cv::Rect(slot.x, slot.y, 256 * slot.scale, 240 * slot.scale));
+        //    s = cv::Scalar(255, 0, 0);
         }
     }
 
@@ -5549,6 +5739,7 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
 
     struct LeaderInfo {
         int64_t elapsed;
+        bool fin;
         std::string text;
         std::string name;
     };
@@ -5557,7 +5748,8 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
         linfos.emplace_back();
         auto& linfo = linfos.back();
         linfo.elapsed = 0;
-        linfo.text = "--:--.--";
+        linfo.fin = false;
+        linfo.text = "--:--.---";
         linfo.name = player.Names.ShortName;
         auto it = m_PlayerInfo.find(player.UniquePlayerID);
         if (it != m_PlayerInfo.end()) {
@@ -5565,11 +5757,15 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
             if (info.best_time != 0) {
                 linfo.elapsed = info.best_time;
                 linfo.text = info.best_text;
+                linfo.fin = true;
             }
         }
     }
     std::sort(linfos.begin(), linfos.end(), [&](const LeaderInfo& a, const LeaderInfo& b){
-        return a.elapsed < b.elapsed;
+        if (a.fin == b.fin) {
+            return a.elapsed < b.elapsed;
+        }
+        return a.fin > b.fin;
     });
     size_t c = 1;
     for (size_t i = 0; i < linfos.size(); i++) {
@@ -5578,20 +5774,22 @@ void LTAViewApp::RenderToAux(cv::Mat aux) {
                 c++;
             }
         }
+        size_t h = i + 1;
+        size_t k = i * 2 + 1;
 
-        ppux.RenderString(x, y + i * 10, std::to_string(i),
+        int spacing = 40;
+        ppux.RenderString(x, y + k * spacing, std::to_string(h),
                 m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 3,
                 nes::EffectInfo::Defaults());
-        ppux.RenderString(x + 10, y + i * 10, linfos[i].name,
+        ppux.RenderString(x + spacing, y + k * spacing, linfos[i].name,
                 m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 3,
                 nes::EffectInfo::Defaults());
-        // HERE change the spacing and shti
-        ppux.RenderString(x + 100, y + i * 10, linfos[i].text,
+        ppux.RenderString(x + 100, y + k * spacing + spacing, linfos[i].text,
                 m_Comp->StaticData.Font.data(), tpal.data(), render.PaletteBGR, 3,
                 nes::EffectInfo::Defaults());
     }
 
-    ppux.StrokeOutlineO(1.0f, nes::PALETTE_ENTRY_BLACK, render.PaletteBGR);
+    ppux.StrokeOutlineO(5.0f, nes::PALETTE_ENTRY_BLACK, render.PaletteBGR);
 }
 
 void LTAViewApp::NoteOutput(const SMBCompPlayer& player, SMBMessageProcessorOutputPtr out, const SMBCompPlayerTimings& timings, StepTimingEvent event) {
@@ -5629,7 +5827,7 @@ void LTAViewApp::NoteOutput(const SMBCompPlayer& player, SMBMessageProcessorOutp
         info.finished = true;
         int64_t elapsed;
         std::string text;
-        TimingsToText(m_Comp, &timings, player, &text, &elapsed);
+        TimingsToText2(m_Comp, &timings, player, &text, &elapsed);
         std::cout << player.Names.FullName << " finish run: " << elapsed << " " << text << std::endl;
         if (info.best_time == 0 || elapsed < info.best_time) {
             info.best_time = elapsed;
@@ -5641,6 +5839,7 @@ void LTAViewApp::NoteOutput(const SMBCompPlayer& player, SMBMessageProcessorOutp
         if (m_TournamentBestTime == 0 || elapsed < m_TournamentBestTime) {
             m_TournamentBestTime = elapsed;
             m_TournamentBest = info.personal_best;
+            m_TournamentBestSplits = info.personal_best_splits;
         }
     } else if (info.current_run.size()) {
         info.current_run.push_back(out);
@@ -6973,6 +7172,53 @@ bool sta::rgms::TimingsToText(SMBComp* comp, const SMBCompPlayerTimings* timings
             return false;
         } else {
             if (text) *text = "--:--.--";
+            return false;
+        }
+    }
+    return false;
+}
+
+bool sta::rgms::TimingsToText2(SMBComp* comp, const SMBCompPlayerTimings* timings, const SMBCompPlayer& player,
+        std::string* text, int64_t* elapsedt)
+{
+    if (!timings) {
+        if (text) *text = "--:--.---";
+        return false;
+    }
+    if (timings->State == TimingState::WAITING_FOR_1_1) {
+        if (timings->SplitM2s.empty()) {
+            if (text) *text = "--:--.---";
+            return false;
+        } else {
+            if (elapsedt) *elapsedt = timings->SplitM2s.back() - timings->SplitM2s.front();
+
+            int64_t timems = static_cast<int64_t>(static_cast<double>(timings->SplitM2s.back() -
+                            timings->SplitM2s.front()) * nes::NTSC_MS_PER_M2);
+            std::string time;
+            if (timems >= (10 * 60 * 1000)) {
+                time = util::SimpleMillisFormat(timems, util::SimpleTimeFormatFlags::MINS);
+            } else {
+                time = util::SimpleMillisFormat(
+                        timems,
+                        util::SimpleTimeFormatFlags::MSMS);
+                time.pop_back();
+            }
+
+            if (text) *text = time;
+            return true;
+        }
+    } else {
+        auto out = GetLatestPlayerOutput(*comp, player);
+        if (out && !timings->SplitM2s.empty()) {
+            if (elapsedt) *elapsedt = out->M2Count - timings->SplitM2s.front();
+            std::string time = util::SimpleMillisFormat(
+                    static_cast<int64_t>(static_cast<double>(out->M2Count -
+                            timings->SplitM2s.front()) * nes::NTSC_MS_PER_M2),
+                util::SimpleTimeFormatFlags::MSMS);
+            if (text) *text = time;
+            return false;
+        } else {
+            if (text) *text = "--:--.---";
             return false;
         }
     }
@@ -10364,92 +10610,92 @@ RecRecordingsComponent::RecRecordingsComponent(sta::RuntimeConfig* config, RecRe
 
 void RecRecordingsComponent::Init()
 {
-    m_Database->GetAllRecordings(&m_Recordings);
-    //m_Timeline = cv::Mat::zeros(0, 0, CV_8UC3);
-    //m_TimelineInfoIndex = cv::Mat::zeros(0, 0, CV_32SC1);
-    //m_TimelineInfo.clear();
-    //if (m_Recordings.empty()) {
-    //    return;
-    //}
-
-
-    struct event {
-        int64_t time;
-        size_t recording_index;
-        bool is_start;
-    };
-    std::vector<event> events(m_Recordings.size() * 2);
-    {
-        size_t i = 0;
-        for (auto rec : m_Recordings) {
-            auto& start = events[i];
-            auto& end = events[i + 1];
-            start.time = rec.unix_timestamp * 1000 + rec.offset_millis;
-            end.time = rec.unix_timestamp * 1000 + rec.offset_millis + rec.elapsed_millis;
-            start.recording_index = i / 2;
-            end.recording_index = i / 2;
-            start.is_start = true;
-            end.is_start = false;
-            i += 2;
-        }
-    }
-    std::sort(events.begin(), events.end(), [&](const auto& a, const auto& b){
-            if (a.time == b.time) {
-            return a.is_start < b.is_start;
-            }
-        return a.time < b.time;
-    });
-
-    m_StartTime = static_cast<int>(events.front().time / 1000);
-    m_EndTime = static_cast<int>(events.back().time / 1000);
-
-    m_TimesWithStuff.clear();
-
-    size_t max_slots = 0;
-    size_t current_slots = 0;
-    int64_t empty_time = 0;
-    int64_t this_time = 0;
-    int64_t orig_time = 0;
-    std::vector<int64_t> start_times;
-    for (auto & event : events) {
-        if (event.is_start) {
-            if (current_slots == 0 && this_time) {
-                orig_time = event.time;
-                empty_time += (event.time - this_time);
-            }
-            current_slots++;
-            if (current_slots > max_slots) {
-                max_slots = current_slots;
-            }
-        } else {
-            if (current_slots == 0) {
-                throw std::runtime_error("?");
-            }
-            current_slots--;
-            if (current_slots == 0) {
-                this_time = event.time;
-                //std::cout << orig_time << " " << event.time << std::endl;
-                m_TimesWithStuff.emplace_back(orig_time / 1000, event.time / 1000);
-            }
-        }
-    }
-
-    //int64_t total_time = events.back().time - events.front().time;
-    //total_time -= empty_time;
-
-    //int64_t scale = 4000;
-
-    //size_t nx = total_time / scale + 1;
-    //std::cout << nx << std::endl;
-    //std::vector<size_t> slots(max_slots, events.size());
-
-    //m_Time.resize(nx, 0);
-
-    //int64_t current_time = events[0].time;
-    //for (auto & event : events) {
-
-
-    //}
+//    m_Database->GetAllRecordings(&m_Recordings);
+//    //m_Timeline = cv::Mat::zeros(0, 0, CV_8UC3);
+//    //m_TimelineInfoIndex = cv::Mat::zeros(0, 0, CV_32SC1);
+//    //m_TimelineInfo.clear();
+//    //if (m_Recordings.empty()) {
+//    //    return;
+//    //}
+//
+//
+//    struct event {
+//        int64_t time;
+//        size_t recording_index;
+//        bool is_start;
+//    };
+//    std::vector<event> events(m_Recordings.size() * 2);
+//    {
+//        size_t i = 0;
+//        for (auto rec : m_Recordings) {
+//            auto& start = events[i];
+//            auto& end = events[i + 1];
+//            start.time = rec.unix_timestamp * 1000 + rec.offset_millis;
+//            end.time = rec.unix_timestamp * 1000 + rec.offset_millis + rec.elapsed_millis;
+//            start.recording_index = i / 2;
+//            end.recording_index = i / 2;
+//            start.is_start = true;
+//            end.is_start = false;
+//            i += 2;
+//        }
+//    }
+//    std::sort(events.begin(), events.end(), [&](const auto& a, const auto& b){
+//            if (a.time == b.time) {
+//            return a.is_start < b.is_start;
+//            }
+//        return a.time < b.time;
+//    });
+//
+//    m_StartTime = static_cast<int>(events.front().time / 1000);
+//    m_EndTime = static_cast<int>(events.back().time / 1000);
+//
+//    m_TimesWithStuff.clear();
+//
+//    size_t max_slots = 0;
+//    size_t current_slots = 0;
+//    int64_t empty_time = 0;
+//    int64_t this_time = 0;
+//    int64_t orig_time = 0;
+//    std::vector<int64_t> start_times;
+//    for (auto & event : events) {
+//        if (event.is_start) {
+//            if (current_slots == 0 && this_time) {
+//                orig_time = event.time;
+//                empty_time += (event.time - this_time);
+//            }
+//            current_slots++;
+//            if (current_slots > max_slots) {
+//                max_slots = current_slots;
+//            }
+//        } else {
+//            if (current_slots == 0) {
+//                throw std::runtime_error("?");
+//            }
+//            current_slots--;
+//            if (current_slots == 0) {
+//                this_time = event.time;
+//                //std::cout << orig_time << " " << event.time << std::endl;
+//                m_TimesWithStuff.emplace_back(orig_time / 1000, event.time / 1000);
+//            }
+//        }
+//    }
+//
+//    //int64_t total_time = events.back().time - events.front().time;
+//    //total_time -= empty_time;
+//
+//    //int64_t scale = 4000;
+//
+//    //size_t nx = total_time / scale + 1;
+//    //std::cout << nx << std::endl;
+//    //std::vector<size_t> slots(max_slots, events.size());
+//
+//    //m_Time.resize(nx, 0);
+//
+//    //int64_t current_time = events[0].time;
+//    //for (auto & event : events) {
+//
+//
+//    //}
 }
 
 void RecRecordingsComponent::ScanStaticDirectory()
@@ -10517,81 +10763,137 @@ void RecRecordingsComponent::NewTime()
 
 void RecRecordingsComponent::OnFrame()
 {
-    if (ImGui::Begin("recordings")) {
-        if (ImGui::Button("scan static directory")) {
-            ScanStaticDirectory();
-            Init();
-        }
-        if (rgmui::SliderIntExt("replay start", &m_ReplayStartTime, m_StartTime, m_EndTime)) {
-            NewTime();
-        }
-        if (ImGui::CollapsingHeader("stuff times")) {
-            for (auto & [from, to] : m_TimesWithStuff) {
-                ImGui::PushID(from);
-                if (rgmui::SliderIntExt("replay start", &m_ReplayStartTime, from, to)) {
-                    NewTime();
-                }
-                ImGui::PopID();
-            }
-        }
-
-        rgmui::TextFmt("{}", m_InCount);
+    if (ImGui::Begin("recreview")) {
         if (ImGui::Button("load")) {
-            int64_t timems = static_cast<int64_t>(m_ReplayStartTime) * 1000;
-            m_LoadedRecordings.clear();
-            for (auto & rec : m_Recordings) {
-                int64_t start = rec.unix_timestamp * 1000 + rec.offset_millis;
-                int64_t end = start + rec.elapsed_millis;
-                if (timems >= start && timems <= end) {
-                    LoadedRecording lrec;
-                    lrec.Path = rec.import_path;
-                    lrec.Recording = std::make_shared<SMBSerialRecording>(
-                            rec.import_path, m_SMBDatabase.GetNametableCache());
-                    lrec.Start = timems - start;
-                    lrec.Recording->StartAt(lrec.Start);
-                    lrec.Recording->SetPaused(true);
-                    lrec.Target = fmt::format("tcp://localhost:{}",
-                            5555 + m_LoadedRecordings.size());
+            SMBSerialRecording recording(
+"/run/user/1000/gvfs/smb-share:server=unraid.local,share=unraid/rto/20250608T110732_seat2.rec"
+                    , m_SMBDatabase.GetNametableCache());
+            recording.GetAllOutputs(&m_Outputs, false);
+            m_Index = 0;
+            m_Start = 0;
+            m_End = 0;
+        }
+        ImGui::InputInt("start", &m_Start);
+        ImGui::InputInt("end", &m_End);
 
-                    lrec.Socket = std::make_shared<zmq::socket_t>(m_Context,
-                            zmq::socket_type::pub);
-                    lrec.Name = fmt::format("seat{}", m_LoadedRecordings.size() + 1);
-                    lrec.Socket->bind(lrec.Target);
-                    m_LoadedRecordings.push_back(lrec);
+        rgmui::SliderIntExt("index", &m_Index, 0, static_cast<int>(m_Outputs.size()) - 1);
+        if (m_Index >= 0 && m_Index < static_cast<int>(m_Outputs.size())) {
+            auto out = m_Outputs[m_Index];
+            cv::Mat q = cv::Mat::zeros(240, 256, CV_8UC3);
+
+            nes::PPUx ppux(q.cols, q.rows, q.data, nes::PPUxPriorityStatus::ENABLED);
+            auto n = m_SMBDatabase.GetNametableCache();
+            auto r = m_SMBDatabase.GetBaseRom();
+            rgms::RenderSMBToPPUX(out->Frame, out->FramePalette,
+                    n, &ppux,
+                    r);
+
+
+            rgmui::Mat("out", q);
+        }
+
+        if (ImGui::Button("export")) {
+            std::ofstream of("export.fm2");
+            std::vector<nes::ControllerState> states;
+            for (int i = m_Start; i <= m_End; i++) {
+                if (i >= 0 && i < static_cast<int>(m_Outputs.size())) {
+                    auto out = m_Outputs[i];
+                    cv::Mat q = cv::Mat::zeros(240, 256, CV_8UC3);
+
+                    nes::PPUx ppux(q.cols, q.rows, q.data, nes::PPUxPriorityStatus::ENABLED);
+                    auto n = m_SMBDatabase.GetNametableCache();
+                    auto r = m_SMBDatabase.GetBaseRom();
+                    rgms::RenderSMBToPPUX(out->Frame, out->FramePalette,
+                            n, &ppux,
+                            r);
+                    cv::imwrite(fmt::format("{:08d}.png", i), q);
+                    states.push_back(out->Controller);
                 }
+
             }
+            nes::WriteFM2File(of, states, nes::FM2Header::Defaults());
         }
-        bool ispaused = false;
-        for (auto & rec : m_LoadedRecordings) {
-            ispaused = rec.Recording->GetPaused();
-            rgmui::TextFmt("{} - {} {} {}", rec.Path, rec.Start,
-                    rec.Recording->GetCurrentElapsedMillis(),
-                    rec.Recording->GetPaused());
-        }
-        if (m_LoadedRecordings.size() > 0) {
-            if ((ispaused && ImGui::Button("start")) || (!ispaused && ImGui::Button("stop"))) {
-                for (auto & rec : m_LoadedRecordings) {
-                    rec.Recording->SetPaused(!ispaused);
-                }
-            }
-        }
+
+
+
     }
     ImGui::End();
 
-    std::vector<uint8_t> buffer;
-    for (auto & rec : m_LoadedRecordings) {
-        bool sent_one = false;
-        while (auto p = rec.Recording->GetNextProcessorOutput()) {
-            if (p->Frame.NTDiffs.size() > 5000) {
-                p->Frame.NTDiffs.resize(5000);
-            }
-            OutputToBytes(p, &buffer);
-            rec.Socket->send(zmq::str_buffer("smb"), zmq::send_flags::sndmore);
-            rec.Socket->send(zmq::message_t(rec.Name.data(), rec.Name.size()), zmq::send_flags::sndmore);
-            rec.Socket->send(zmq::message_t(buffer.data(), buffer.size()), zmq::send_flags::none);
-            //std::cout << rec.Path << std::endl;
-        }
-    }
+//    if (ImGui::Begin("recordings")) {
+//        if (ImGui::Button("scan static directory")) {
+//            ScanStaticDirectory();
+//            Init();
+//        }
+//        if (rgmui::SliderIntExt("replay start", &m_ReplayStartTime, m_StartTime, m_EndTime)) {
+//            NewTime();
+//        }
+//        if (ImGui::CollapsingHeader("stuff times")) {
+//            for (auto & [from, to] : m_TimesWithStuff) {
+//                ImGui::PushID(from);
+//                if (rgmui::SliderIntExt("replay start", &m_ReplayStartTime, from, to)) {
+//                    NewTime();
+//                }
+//                ImGui::PopID();
+//            }
+//        }
+//
+//        rgmui::TextFmt("{}", m_InCount);
+//        if (ImGui::Button("load")) {
+//            int64_t timems = static_cast<int64_t>(m_ReplayStartTime) * 1000;
+//            m_LoadedRecordings.clear();
+//            for (auto & rec : m_Recordings) {
+//                int64_t start = rec.unix_timestamp * 1000 + rec.offset_millis;
+//                int64_t end = start + rec.elapsed_millis;
+//                if (timems >= start && timems <= end) {
+//                    LoadedRecording lrec;
+//                    lrec.Path = rec.import_path;
+//                    lrec.Recording = std::make_shared<SMBSerialRecording>(
+//                            rec.import_path, m_SMBDatabase.GetNametableCache());
+//                    lrec.Start = timems - start;
+//                    lrec.Recording->StartAt(lrec.Start);
+//                    lrec.Recording->SetPaused(true);
+//                    lrec.Target = fmt::format("tcp://localhost:{}",
+//                            5555 + m_LoadedRecordings.size());
+//
+//                    lrec.Socket = std::make_shared<zmq::socket_t>(m_Context,
+//                            zmq::socket_type::pub);
+//                    lrec.Name = fmt::format("seat{}", m_LoadedRecordings.size() + 1);
+//                    lrec.Socket->bind(lrec.Target);
+//                    m_LoadedRecordings.push_back(lrec);
+//                }
+//            }
+//        }
+//        bool ispaused = false;
+//        for (auto & rec : m_LoadedRecordings) {
+//            ispaused = rec.Recording->GetPaused();
+//            rgmui::TextFmt("{} - {} {} {}", rec.Path, rec.Start,
+//                    rec.Recording->GetCurrentElapsedMillis(),
+//                    rec.Recording->GetPaused());
+//        }
+//        if (m_LoadedRecordings.size() > 0) {
+//            if ((ispaused && ImGui::Button("start")) || (!ispaused && ImGui::Button("stop"))) {
+//                for (auto & rec : m_LoadedRecordings) {
+//                    rec.Recording->SetPaused(!ispaused);
+//                }
+//            }
+//        }
+//    }
+//    ImGui::End();
+//
+//    std::vector<uint8_t> buffer;
+//    for (auto & rec : m_LoadedRecordings) {
+//        bool sent_one = false;
+//        while (auto p = rec.Recording->GetNextProcessorOutput()) {
+//            if (p->Frame.NTDiffs.size() > 5000) {
+//                p->Frame.NTDiffs.resize(5000);
+//            }
+//            OutputToBytes(p, &buffer);
+//            rec.Socket->send(zmq::str_buffer("smb"), zmq::send_flags::sndmore);
+//            rec.Socket->send(zmq::message_t(rec.Name.data(), rec.Name.size()), zmq::send_flags::sndmore);
+//            rec.Socket->send(zmq::message_t(buffer.data(), buffer.size()), zmq::send_flags::none);
+//            //std::cout << rec.Path << std::endl;
+//        }
+//    }
 }
 
 LatencySource::LatencySource(ISMBSerialSource* source)
